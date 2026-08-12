@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>个股监控看板</title>
+    <style>
+        body {
+            font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+            margin: 24px;
+            color: #333;
+        }
+        h1 { font-size: 20px; margin: 0 0 12px; }
+        .toolbar { margin-bottom: 12px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+        button {
+            padding: 6px 16px;
+            border: 1px solid #ccc;
+            background: #fff;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        button:hover { background: #f5f5f5; }
+        .toolbar label { font-size: 13px; display: flex; align-items: center; gap: 4px; }
+        .toolbar input[type="number"] { width: 56px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; }
+        #status { color: #888; font-size: 13px; min-width: 120px; }
+        table { border-collapse: collapse; width: 100%; font-size: 14px; }
+        th, td { border: 1px solid #e0e0e0; padding: 7px 10px; text-align: right; white-space: nowrap; }
+        th {
+            background: #f7f7f7;
+            cursor: pointer;
+            user-select: none;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        th:hover { background: #ececec; }
+        th.asc::after { content: " ▲"; color: #1a73e8; }
+        th.desc::after { content: " ▼"; color: #1a73e8; }
+        td.code, td.name { text-align: left; }
+        .num-up { color: #e74c3c; }
+        .num-down { color: #27ae60; }
+        .muted { color: #bbb; }
+        .meta { color: #888; font-size: 12px; margin-top: 10px; }
+        .hint { color: #aaa; font-size: 12px; }
+        /* 列拖拽样式 */
+        th[draggable="true"] { cursor: grab; }
+        th.dragging { opacity: 0.4; cursor: grabbing; }
+        th.drag-over { background: #d4e8ff !important; }
+        .grip { color: #bbb; margin-right: 4px; font-size: 11px; }
+    </style>
+</head>
+<body>
+    <h1>个股监控看板</h1>
+    <div class="toolbar">
+        <button id="refresh-btn">刷新数据</button>
+        <label><input type="checkbox" id="auto-toggle" checked> 自动刷新</label>
+        <label>间隔 <input type="number" id="interval-input" value="5" min="1" max="3600"> 秒</label>
+        <span id="status"></span>
+    </div>
+    <table id="stock-table">
+        <thead><tr></tr></thead>
+        <tbody></tbody>
+    </table>
+    <div class="meta">
+        <div id="updated"></div>
+        <div class="hint">提示：点击表头排序；拖拽表头可调整列顺序</div>
+    </div>
+
+    <script>
+        // ===== 列定义（顺序可拖拽改变） =====
+        const COLUMN_DEFS = [
+            { key: 'code',              label: '代码',         type: 'text' },
+            { key: 'name',              label: '名称',         type: 'text' },
+            { key: 'price_change_pct',  label: '最新股价涨幅',  type: 'num', suffix: '%', pct: true },
+            { key: 'vr_930',            label: '9:30分量比',    type: 'num' },
+            { key: 'change_930_pct',    label: '9:30分涨幅',    type: 'num', suffix: '%', pct: true },
+            { key: 'change_931_pct',    label: '9:31分涨幅',    type: 'num', suffix: '%', pct: true },
+            { key: 'ma7',               label: 'ma7股价',       type: 'num' },
+            { key: 'latest_price',      label: '最新价格',      type: 'num' },
+            { key: 'dev_ma7_pct',       label: '距离ma7%',      type: 'num', suffix: '%', pct: true },
+            { key: 'remark',            label: '备注',           type: 'text' },
+        ];
+        let columns = COLUMN_DEFS.slice();
+
+        // ===== 数据与排序状态 =====
+        let currentRows = {{ data | tojson }};
+        let sortKey = null;
+        let sortAsc = true;
+
+        // ===== 自动刷新状态 =====
+        let autoOn = true;
+        let intervalSec = 5;
+        let countdown = intervalSec;
+        let timer = null;
+        let loading = false;
+
+        // ===== 格式化 =====
+        function fmt(v) {
+            if (v === null || v === undefined || (typeof v === 'number' && isNaN(v))) {
+                return '<span class="muted">-</span>';
+            }
+            return Number(v).toFixed(2);
+        }
+        function pctClass(v) {
+            if (typeof v !== 'number' || isNaN(v)) return '';
+            return v > 0 ? 'num-up' : (v < 0 ? 'num-down' : '');
+        }
+
+        // ===== 渲染表头 =====
+        function renderHead() {
+            const tr = document.querySelector('#stock-table thead tr');
+            tr.innerHTML = '';
+            columns.forEach(col => {
+                const th = document.createElement('th');
+                th.textContent = col.label;
+                th.dataset.key = col.key;
+                th.dataset.type = col.type;
+                th.draggable = true;
+                if (sortKey === col.key) th.classList.add(sortAsc ? 'asc' : 'desc');
+                tr.appendChild(th);
+            });
+            bindHeadEvents();
+        }
+
+        // ===== 渲染数据行 =====
+        function renderRows(rows) {
+            const tbody = document.querySelector('#stock-table tbody');
+            tbody.innerHTML = '';
+            rows.forEach(r => {
+                const tr = document.createElement('tr');
+                let html = '';
+                columns.forEach(col => {
+                    const v = r[col.key];
+                    if (col.type === 'text') {
+                        html += `<td class="${col.key}">${v ?? ''}</td>`;
+                    } else {
+                        const cls = col.pct ? pctClass(v) : '';
+                        const suffix = col.suffix || '';
+                        html += `<td class="${cls}">${fmt(v)}${suffix}</td>`;
+                    }
+                });
+                tr.innerHTML = html;
+                tbody.appendChild(tr);
+            });
+        }
+
+        function renderAll() {
+            renderHead();
+            // 应用当前排序状态（点击表头排序、列拖拽后都走这里）
+            let rows = currentRows;
+            if (sortKey) {
+                const col = columns.find(c => c.key === sortKey);
+                if (col) rows = sortRows(currentRows, sortKey, col.type, sortAsc);
+            }
+            renderRows(rows);
+        }
+
+        // ===== 排序 =====
+        function sortRows(rows, key, type, asc) {
+            const arr = rows.slice();
+            arr.sort((a, b) => {
+                let va = a[key], vb = b[key];
+                if (type === 'num') {
+                    const na = (typeof va === 'number' && !isNaN(va)) ? va : Number.NEGATIVE_INFINITY;
+                    const nb = (typeof vb === 'number' && !isNaN(vb)) ? vb : Number.NEGATIVE_INFINITY;
+                    return asc ? na - nb : nb - na;
+                } else {
+                    va = (va === null || va === undefined) ? '' : String(va);
+                    vb = (vb === null || vb === undefined) ? '' : String(vb);
+                    return asc ? va.localeCompare(vb, 'zh') : vb.localeCompare(va, 'zh');
+                }
+            });
+            return arr;
+        }
+        function applySort(key, type) {
+            if (sortKey === key) {
+                sortAsc = !sortAsc;
+            } else {
+                sortKey = key;
+                sortAsc = true;
+            }
+            renderAll();
+        }
+
+        // ===== 表头事件：点击排序 + 拖拽换列 =====
+        let dragKey = null;
+        function bindHeadEvents() {
+            document.querySelectorAll('#stock-table th').forEach(th => {
+                // 点击排序
+                th.addEventListener('click', () => {
+                    if (dragKey !== null) return; // 刚拖完则忽略本次点击
+                    const key = th.dataset.key;
+                    const type = th.dataset.type;
+                    if (key) applySort(key, type);
+                });
+                // 拖拽
+                th.addEventListener('dragstart', e => {
+                    dragKey = th.dataset.key;
+                    th.classList.add('dragging');
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', dragKey);
+                });
+                th.addEventListener('dragend', () => {
+                    th.classList.remove('dragging');
+                    document.querySelectorAll('#stock-table th').forEach(t => t.classList.remove('drag-over'));
+                    // 延迟清除 dragKey，避免 drag 后立即触发 click
+                    setTimeout(() => { dragKey = null; }, 0);
+                });
+                th.addEventListener('dragover', e => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    if (th.dataset.key !== dragKey) th.classList.add('drag-over');
+                });
+                th.addEventListener('dragleave', () => {
+                    th.classList.remove('drag-over');
+                });
+                th.addEventListener('drop', e => {
+                    e.preventDefault();
+                    th.classList.remove('drag-over');
+                    const targetKey = th.dataset.key;
+                    if (dragKey && targetKey && dragKey !== targetKey) {
+                        reorderColumns(dragKey, targetKey);
+                    }
+                });
+            });
+        }
+
+        function reorderColumns(draggedKey, targetKey) {
+            const arr = columns.slice();
+            const fromIdx = arr.findIndex(c => c.key === draggedKey);
+            if (fromIdx < 0) return;
+            const item = arr.splice(fromIdx, 1)[0];
+            const toIdx = arr.findIndex(c => c.key === targetKey);
+            arr.splice(toIdx, 0, item);
+            columns = arr;
+            renderAll();
+        }
+
+        // ===== 数据刷新 =====
+        async function refreshData() {
+            loading = true;
+            updateStatus();
+            try {
+                const resp = await fetch('/api/data');
+                const data = await resp.json();
+                currentRows = data;
+                // 刷新后保留当前排序，重新应用一次
+                if (sortKey) {
+                    const col = columns.find(c => c.key === sortKey);
+                    if (col) currentRows = sortRows(currentRows, sortKey, col.type, sortAsc);
+                }
+                renderRows(currentRows);
+                setUpdated();
+            } catch (e) {
+                document.getElementById('status').textContent = '刷新失败：' + e.message;
+            } finally {
+                loading = false;
+                countdown = intervalSec;
+                updateStatus();
+            }
+        }
+
+        // ===== 自动刷新控制 =====
+        function startAuto() {
+            if (timer) return;
+            autoOn = true;
+            countdown = intervalSec;
+            timer = setInterval(() => {
+                if (loading) return;
+                countdown--;
+                if (countdown <= 0) {
+                    refreshData();
+                } else {
+                    updateStatus();
+                }
+            }, 1000);
+            updateStatus();
+        }
+        function stopAuto() {
+            autoOn = false;
+            if (timer) { clearInterval(timer); timer = null; }
+            updateStatus();
+        }
+        function updateStatus() {
+            const el = document.getElementById('status');
+            if (loading) {
+                el.textContent = '加载中...';
+            } else if (autoOn) {
+                el.textContent = `下次刷新：${countdown}s`;
+            } else {
+                el.textContent = '已暂停';
+            }
+        }
+
+        function setUpdated() {
+            document.getElementById('updated').textContent =
+                '最近更新：' + new Date().toLocaleString('zh-CN');
+        }
+
+        // ===== 工具栏事件 =====
+        document.getElementById('refresh-btn').addEventListener('click', () => {
+            refreshData();
+        });
+        document.getElementById('auto-toggle').addEventListener('change', e => {
+            if (e.target.checked) startAuto(); else stopAuto();
+        });
+        document.getElementById('interval-input').addEventListener('change', e => {
+            let v = parseInt(e.target.value, 10);
+            if (isNaN(v) || v < 1) v = 1;
+            intervalSec = v;
+            e.target.value = v;
+            countdown = intervalSec;
+            updateStatus();
+        });
+
+        // ===== 初始化 =====
+        renderAll();
+        setUpdated();
+        startAuto();
+    </script>
+</body>
+</html>
