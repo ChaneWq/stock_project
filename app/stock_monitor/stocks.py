@@ -2,10 +2,11 @@
 股票监控列表配置（CSV 读取）
 
 CSV 文件：与本文件同目录的 stocks.csv
-CSV 列：code,name,remark
-    code:   6位股票代码
-    name:   股票名称
-    remark: 备注（可选，用户自定义）
+CSV 列：code,name,remark,category
+    code:     6位股票代码
+    name:     股票名称
+    remark:   备注（可选，用户自定义）
+    category: 分类（可选，用于页面分组展示；为空归到「未分类」）
 """
 
 import csv
@@ -19,7 +20,7 @@ def load_stocks():
     读取 stocks.csv 返回股票列表
 
     Returns:
-        list[dict]: [{'code','name','remark'}, ...]
+        list[dict]: [{'code','name','remark','category'}, ...]
     """
     stocks = []
     if not os.path.exists(CSV_PATH):
@@ -33,7 +34,13 @@ def load_stocks():
             code = (row.get('code') or '').strip()
             name = (row.get('name') or '').strip()
             remark = (row.get('remark') or '').strip()
+            category = (row.get('category') or '').strip()
             if not code:
                 continue
-            stocks.append({'code': code, 'name': name, 'remark': remark})
+            stocks.append({
+                'code': code,
+                'name': name,
+                'remark': remark,
+                'category': category,
+            })
     return stocks

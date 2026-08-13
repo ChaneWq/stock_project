@@ -4,6 +4,7 @@
 字段口径：
     最新股价涨幅   : (日线最新收盘 - 昨收) / 昨收 * 100
     9:30 分量比     : BasicMinutesWithVR 返回第 1 行 volume_ratio
+    最新量比        : BasicMinutesWithVR 返回最后一行 volume_ratio（最新分钟）
     9:30 分涨幅     : (9:30 价 - 昨收) / 昨收 * 100
     9:31 分涨幅     : (9:31 价 - 昨收) / 昨收 * 100
     ma7 股价        : 日线最新行 ma7
@@ -53,14 +54,17 @@ def _collect_one(stock, date, bars, vr, ma_indicator):
     code = stock['code']
     name = stock.get('name', '')
     remark = stock.get('remark', '')
+    category = stock.get('category', '')
 
     result = {
         'code': code,
         'name': name,
         'remark': remark,
+        'category': category,
         'latest_price': None,
         'price_change_pct': None,
         'vr_930': None,
+        'vr_latest': None,
         'change_930_pct': None,
         'change_931_pct': None,
         'ma7': None,
@@ -109,6 +113,7 @@ def _collect_one(stock, date, bars, vr, ma_indicator):
         row_931 = vr_df.iloc[1]
 
         result['vr_930'] = _round2(row_930['volume_ratio'])
+        result['vr_latest'] = _round2(vr_df.iloc[-1]['volume_ratio'])
         if prev_close is not None:
             result['change_930_pct'] = _safe_pct(float(row_930['close']), prev_close)
             result['change_931_pct'] = _safe_pct(float(row_931['close']), prev_close)
@@ -145,8 +150,10 @@ def collect_all(stocks, date=None):
             print(f"[monitor] {code} {name} 采集异常: {e}")
             r = {
                 'code': code, 'name': name, 'remark': stock.get('remark', ''),
+                'category': stock.get('category', ''),
                 'latest_price': None, 'price_change_pct': None,
-                'vr_930': None, 'change_930_pct': None, 'change_931_pct': None,
+                'vr_930': None, 'vr_latest': None,
+                'change_930_pct': None, 'change_931_pct': None,
                 'ma7': None, 'dev_ma7_pct': None,
             }
         results.append(r)

@@ -23,6 +23,27 @@
         .toolbar label { font-size: 13px; display: flex; align-items: center; gap: 4px; }
         .toolbar input[type="number"] { width: 56px; padding: 4px; border: 1px solid #ccc; border-radius: 4px; }
         #status { color: #888; font-size: 13px; min-width: 120px; }
+        /* 分类 tab 栏 */
+        .tabs { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; border-bottom: 1px solid #e0e0e0; padding-bottom: 0; }
+        .tab {
+            padding: 6px 16px;
+            cursor: pointer;
+            border: 1px solid transparent;
+            border-bottom: none;
+            background: #f5f5f5;
+            border-radius: 4px 4px 0 0;
+            font-size: 13px;
+            user-select: none;
+        }
+        .tab:hover { background: #ececec; }
+        .tab.active {
+            background: #fff;
+            border-color: #e0e0e0;
+            border-bottom: 1px solid #fff;
+            margin-bottom: -1px;
+            font-weight: 600;
+            color: #1a73e8;
+        }
         table { border-collapse: collapse; width: 100%; font-size: 14px; }
         th, td { border: 1px solid #e0e0e0; padding: 7px 10px; text-align: right; white-space: nowrap; }
         th {
@@ -47,6 +68,9 @@
         th.dragging { opacity: 0.4; cursor: grabbing; }
         th.drag-over { background: #d4e8ff !important; }
         .grip { color: #bbb; margin-right: 4px; font-size: 11px; }
+        /* 平均值统计行 */
+        .avg-row td { background: #f0f7ff; font-weight: 600; }
+        .avg-row td.avg-label { color: #1a73e8; text-align: left; }
     </style>
 </head>
 <body>
@@ -55,15 +79,17 @@
         <button id="refresh-btn">刷新数据</button>
         <label><input type="checkbox" id="auto-toggle" checked> 自动刷新</label>
         <label>间隔 <input type="number" id="interval-input" value="5" min="1" max="3600"> 秒</label>
+        <label><input type="checkbox" id="avg-toggle"> 显示平均值</label>
         <span id="status"></span>
     </div>
+    <div class="tabs" id="category-tabs"></div>
     <table id="stock-table">
         <thead><tr></tr></thead>
         <tbody></tbody>
     </table>
     <div class="meta">
         <div id="updated"></div>
-        <div class="hint">提示：点击表头排序；拖拽表头可调整列顺序</div>
+        <div class="hint">提示：点击表头排序；拖拽表头可调整列顺序；点击上方分类切换列表；勾选「显示平均值」查看各列均值</div>
     </div>
 
     <script>
@@ -73,6 +99,7 @@
             { key: 'name',              label: '名称',         type: 'text' },
             { key: 'price_change_pct',  label: '最新股价涨幅',  type: 'num', suffix: '%', pct: true },
             { key: 'vr_930',            label: '9:30分量比',    type: 'num' },
+            { key: 'vr_latest',         label: '最新量比',      type: 'num' },
             { key: 'change_930_pct',    label: '9:30分涨幅',    type: 'num', suffix: '%', pct: true },
             { key: 'change_931_pct',    label: '9:31分涨幅',    type: 'num', suffix: '%', pct: true },
             { key: 'ma7',               label: 'ma7股价',       type: 'num' },
@@ -82,10 +109,12 @@
         ];
         let columns = COLUMN_DEFS.slice();
 
-        // ===== 数据与排序状态 =====
-        let currentRows = {{ data | tojson }};
+        // ===== 全部数据 + 分类状态 =====
+        let allRows = {{ data | tojson }};
+        let currentCategory = '全部';
         let sortKey = null;
         let sortAsc = true;
+        let showAvg = false;
 
         // ===== 自动刷新状态 =====
         let autoOn = true;
@@ -93,6 +122,25 @@
         let countdown = intervalSec;
         let timer = null;
         let loading = false;
+
+        // ===== 分类处理 =====
+        const UNCATEGORIZED = '未分类';
+        function rowCategory(r) {
+            return r.category ? r.category : UNCATEGORIZED;
+        }
+        function getCategories() {
+            const cats = [];
+            const seen = new Set();
+            allRows.forEach(r => {
+                const c = rowCategory(r);
+                if (!seen.has(c)) { seen.add(c); cats.push(c); }
+            });
+            return ['全部', ...cats];
+        }
+        function getCurrentRows() {
+            if (currentCategory === '全部') return allRows;
+            return allRows.filter(r => rowCategory(r) === currentCategory);
+        }
 
         // ===== 格式化 =====
         function fmt(v) {
@@ -104,6 +152,35 @@
         function pctClass(v) {
             if (typeof v !== 'number' || isNaN(v)) return '';
             return v > 0 ? 'num-up' : (v < 0 ? 'num-down' : '');
+        }
+
+        // ===== 平均值计算 =====
+        function calcAvg(rows, key) {
+            const vals = rows.map(r => r[key])
+                             .filter(v => typeof v === 'number' && !isNaN(v));
+            if (vals.length === 0) return null;
+            return vals.reduce((a, b) => a + b, 0) / vals.length;
+        }
+
+        // ===== 渲染分类 tab 栏 =====
+        function renderTabs() {
+            const cats = getCategories();
+            const el = document.getElementById('category-tabs');
+            el.innerHTML = '';
+            cats.forEach(cat => {
+                const tab = document.createElement('div');
+                tab.className = 'tab' + (cat === currentCategory ? ' active' : '');
+                tab.textContent = cat;
+                tab.addEventListener('click', () => {
+                    if (cat === currentCategory) return;
+                    currentCategory = cat;
+                    // 切换 tab 重置排序状态
+                    sortKey = null;
+                    sortAsc = true;
+                    renderAll();
+                });
+                el.appendChild(tab);
+            });
         }
 
         // ===== 渲染表头 =====
@@ -122,10 +199,28 @@
             bindHeadEvents();
         }
 
-        // ===== 渲染数据行 =====
-        function renderRows(rows) {
+        // ===== 渲染数据行（含可选平均值行） =====
+        function renderRows(rows, avgRows) {
             const tbody = document.querySelector('#stock-table tbody');
             tbody.innerHTML = '';
+            // 平均值统计行（开关打开时显示在表格最上方）
+            if (showAvg) {
+                const avgTr = document.createElement('tr');
+                avgTr.className = 'avg-row';
+                let html = '';
+                columns.forEach((col, idx) => {
+                    if (col.type === 'num') {
+                        const avg = calcAvg(avgRows, col.key);
+                        const cls = col.pct ? pctClass(avg) : '';
+                        const suffix = col.suffix || '';
+                        html += `<td class="${cls}">${fmt(avg)}${suffix}</td>`;
+                    } else {
+                        html += `<td class="avg-label">${idx === 0 ? '平均值' : '—'}</td>`;
+                    }
+                });
+                avgTr.innerHTML = html;
+                tbody.appendChild(avgTr);
+            }
             rows.forEach(r => {
                 const tr = document.createElement('tr');
                 let html = '';
@@ -145,14 +240,15 @@
         }
 
         function renderAll() {
+            renderTabs();
             renderHead();
-            // 应用当前排序状态（点击表头排序、列拖拽后都走这里）
-            let rows = currentRows;
+            const currentData = getCurrentRows();
+            let rows = currentData;
             if (sortKey) {
                 const col = columns.find(c => c.key === sortKey);
-                if (col) rows = sortRows(currentRows, sortKey, col.type, sortAsc);
+                if (col) rows = sortRows(currentData, sortKey, col.type, sortAsc);
             }
-            renderRows(rows);
+            renderRows(rows, currentData);
         }
 
         // ===== 排序 =====
@@ -186,14 +282,12 @@
         let dragKey = null;
         function bindHeadEvents() {
             document.querySelectorAll('#stock-table th').forEach(th => {
-                // 点击排序
                 th.addEventListener('click', () => {
-                    if (dragKey !== null) return; // 刚拖完则忽略本次点击
+                    if (dragKey !== null) return;
                     const key = th.dataset.key;
                     const type = th.dataset.type;
                     if (key) applySort(key, type);
                 });
-                // 拖拽
                 th.addEventListener('dragstart', e => {
                     dragKey = th.dataset.key;
                     th.classList.add('dragging');
@@ -203,7 +297,6 @@
                 th.addEventListener('dragend', () => {
                     th.classList.remove('dragging');
                     document.querySelectorAll('#stock-table th').forEach(t => t.classList.remove('drag-over'));
-                    // 延迟清除 dragKey，避免 drag 后立即触发 click
                     setTimeout(() => { dragKey = null; }, 0);
                 });
                 th.addEventListener('dragover', e => {
@@ -243,13 +336,16 @@
             try {
                 const resp = await fetch('/api/data');
                 const data = await resp.json();
-                currentRows = data;
-                // 刷新后保留当前排序，重新应用一次
+                allRows = data;
+                // 刷新后保持当前 tab，重新渲染（排序状态保留）
+                renderTabs();
+                const currentData = getCurrentRows();
+                let rows = currentData;
                 if (sortKey) {
                     const col = columns.find(c => c.key === sortKey);
-                    if (col) currentRows = sortRows(currentRows, sortKey, col.type, sortAsc);
+                    if (col) rows = sortRows(currentData, sortKey, col.type, sortAsc);
                 }
-                renderRows(currentRows);
+                renderRows(rows, currentData);
                 setUpdated();
             } catch (e) {
                 document.getElementById('status').textContent = '刷新失败：' + e.message;
@@ -311,6 +407,10 @@
             e.target.value = v;
             countdown = intervalSec;
             updateStatus();
+        });
+        document.getElementById('avg-toggle').addEventListener('change', e => {
+            showAvg = e.target.checked;
+            renderAll();
         });
 
         // ===== 初始化 =====
