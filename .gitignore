@@ -39,3 +39,6 @@ Thumbs.db
 
 # Trae / editor temp
 .trae-cn/
+
+# 本地配置（不推送）
+app/stock_monitor/stocks.csv
