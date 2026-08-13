@@ -8,6 +8,10 @@
     DAILY_CACHE_ENABLED : 是否启用日线数据缓存
                           日线数据日内不变（收盘后才更新），缓存后后续刷新无需重复请求
                           首次请求照常走网络，后续读缓存
+    MAX_WORKERS      : 并发采集线程数
+                       每个线程创建独立 client（基于 threading.local），互不影响
+                       1 表示串行（等价于不并发）；推荐 3
+                       增大可提速但会增加连接数，封禁风险略增
 
 间隔示例：
     BATCH_SIZE=5, BATCH_INTERVAL=0.2 → 25只 = 4批 × 0.2s = 0.8s 间隔
@@ -21,3 +25,6 @@ BATCH_INTERVAL = 0.2
 
 # 日线数据缓存（日内有效，避免重复请求）
 DAILY_CACHE_ENABLED = True
+
+# 并发采集线程数（1=串行，3=推荐，增大提速但增连接数）
+MAX_WORKERS = 3
