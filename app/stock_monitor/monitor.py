@@ -11,18 +11,61 @@
     最新价格        : 日线最新收盘
     距离 ma7%       : (最新价 - ma7) / ma7 * 100
 
+性能优化：
+    - 日线缓存：日线数据日内不变，首次请求后缓存，后续刷新读缓存（省 N 次请求）
+    - 请求间隔：每只股票之间加 REQUEST_INTERVAL 秒间隔，防止请求过快触发限流
+    - 数据源对象在 collect_all 中创建一次复用
+
 说明：
     - 昨收优先取 BasicMinutesWithVR.get_prev_close()，取不到时用日线第 2 行 close 兜底
     - 当日非交易日或分时获取失败时，分时相关字段为 None（前端显示 -），日线字段仍展示
     - 单只采集异常不中断整体流程
-    - 数据源对象（BasicBars/BasicMinutesWithVR/MAIndicator）在 collect_all 中创建一次复用，
-      避免每只股票重复实例化
 """
 
+import time
 import pandas as pd
 from datetime import datetime
 
 from pystock_data import BasicBars, BasicMinutesWithVR, MAIndicator
+
+from .config import REQUEST_INTERVAL, DAILY_CACHE_ENABLED
+
+
+# 日线数据缓存：key=(code, date_str)，value=daily_df
+# 日内有效（date 变了自动 miss），不主动清理（股票数量有限，内存可控）
+_daily_cache = {}
+
+
+def _get_daily_cached(bars, code, date_str):
+    """
+    获取日线数据（带日内缓存）
+
+    日线数据日内不变，首次请求后缓存，后续刷新直接读缓存。
+    缓存 key 含 date_str，换天后自动 miss 重新请求。
+
+    Args:
+        bars (BasicBars): 复用实例
+        code (str): 股票代码
+        date_str (str): 查询日期 YYYYMMDD（用于缓存隔离）
+
+    Returns:
+        DataFrame: 日线数据
+    """
+    if DAILY_CACHE_ENABLED:
+        key = (code, date_str)
+        if key in _daily_cache:
+            return _daily_cache[key]
+
+    df = bars.get_daily(code, 30)
+
+    if DAILY_CACHE_ENABLED:
+        _daily_cache[(code, date_str)] = df
+    return df
+
+
+def clear_daily_cache():
+    """清空日线缓存（主要用于测试或强制刷新）"""
+    _daily_cache.clear()
 
 
 def _safe_pct(numerator, denominator):
@@ -42,7 +85,7 @@ def _collect_one(stock, date, bars, vr, ma_indicator):
     采集单只股票数据
 
     Args:
-        stock (dict): {'code','name','remark'}
+        stock (dict): {'code','name','remark','category'}
         date (str): 查询日期 YYYYMMDD
         bars (BasicBars): 复用实例
         vr (BasicMinutesWithVR): 复用实例
@@ -71,9 +114,9 @@ def _collect_one(stock, date, bars, vr, ma_indicator):
         'dev_ma7_pct': None,
     }
 
-    # 1) 日线：最新价、昨收兜底、ma7
+    # 1) 日线：最新价、昨收兜底、ma7（带日内缓存）
     try:
-        daily_df = bars.get_daily(code, 30)
+        daily_df = _get_daily_cached(bars, code, date)
     except Exception as e:
         print(f"[monitor] {code} 获取日线失败: {e}")
         daily_df = pd.DataFrame()
@@ -126,13 +169,16 @@ def collect_all(stocks, date=None):
     采集所有股票数据
 
     Args:
-        stocks (list[dict]): [{'code','name','remark'}, ...]
+        stocks (list[dict]): [{'code','name','remark','category'}, ...]
         date (str, optional): 查询日期 YYYYMMDD，默认当日
 
     Returns:
         list[dict]: 每只股票一条记录
     """
     date = date or datetime.now().strftime('%Y%m%d')
+    total = len(stocks)
+    print(f"[monitor] 开始采集 {total} 只股票 (date={date}) ...")
+    t_start = time.time()
 
     # 数据源对象只创建一次，循环复用（避免每只股票重复实例化）
     bars = BasicBars()
@@ -140,7 +186,11 @@ def collect_all(stocks, date=None):
     ma_indicator = MAIndicator(periods=[7])
 
     results = []
-    for stock in stocks:
+    for i, stock in enumerate(stocks):
+        # 请求间隔：第一只不间隔，后续每只之间加间隔，防止请求过快触发限流
+        if i > 0 and REQUEST_INTERVAL > 0:
+            time.sleep(REQUEST_INTERVAL)
+
         code = stock.get('code', '')
         name = stock.get('name', '')
         print(f"[monitor] 采集 {code} {name} (date={date}) ...")
@@ -157,4 +207,7 @@ def collect_all(stocks, date=None):
                 'ma7': None, 'dev_ma7_pct': None,
             }
         results.append(r)
+
+    t_cost = time.time() - t_start
+    print(f"[monitor] 采集完成：{len(results)}/{total} 只，耗时 {t_cost:.2f}s")
     return results
