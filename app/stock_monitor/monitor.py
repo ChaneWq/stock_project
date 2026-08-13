@@ -155,49 +155,60 @@ def _collect_one(stock, date, bars, vr, ma_indicator):
     # 分时查询日期：默认用传入 date，日线有数据时改用日线最新行日期（最近交易日）
     minute_date = date
     if not daily_df.empty:
-        # get_daily 倒序：第1行最新，第2行昨日
         latest_row = daily_df.iloc[0]
-        result['latest_price'] = _round2(latest_row['close'])
-
         # 从日线最新行取分时查询日期（解决非交易日/盘前运行时取不到分时的问题）
         if 'trade_date' in daily_df.columns:
             trade_date = str(latest_row['trade_date'])[:10].replace('-', '')
             if trade_date:
                 minute_date = trade_date
-
+        # 昨收兜底：日线第2行 close
         if len(daily_df) >= 2:
             prev_close_from_daily = float(daily_df.iloc[1]['close'])
-            result['price_change_pct'] = _safe_pct(
-                float(latest_row['close']), prev_close_from_daily
-            )
 
-        # ma7 需按时间正序计算
-        asc_df = daily_df.iloc[::-1].reset_index(drop=True)
-        ma_df = ma_indicator.calculate(asc_df)
-        result['ma7'] = _round2(ma_df.iloc[-1]['ma7'])
-        result['dev_ma7_pct'] = _safe_pct(result['latest_price'], result['ma7'])
-
-    # 2) 分时带量比：9:30/9:31 行 + 量比 + prev_close（用日线最新日期）
+    # 2) 分时带量比：最新价、量比、9:30/9:31 涨幅（每次刷新实时获取）
     try:
         vr_df = vr.get_data(code, minute_date, n=5)
     except Exception as e:
         print(f"[monitor] {code} 获取分时失败: {e}")
         vr_df = pd.DataFrame()
 
+    latest_price = None
+    prev_close = None
     if not vr_df.empty and len(vr_df) >= 2:
         prev_close = vr.get_prev_close()
-        # prev_close 取不到时用日线兜底
         if prev_close is None:
             prev_close = prev_close_from_daily
 
         row_930 = vr_df.iloc[0]
         row_931 = vr_df.iloc[1]
+        # 最新价：分时最新行 close（实时）
+        latest_price = _round2(vr_df.iloc[-1]['close'])
 
         result['vr_930'] = _round2(row_930['volume_ratio'])
         result['vr_latest'] = _round2(vr_df.iloc[-1]['volume_ratio'])
         if prev_close is not None:
             result['change_930_pct'] = _safe_pct(float(row_930['close']), prev_close)
             result['change_931_pct'] = _safe_pct(float(row_931['close']), prev_close)
+
+    # 分时取不到最新价时，用日线兜底
+    if latest_price is None and not daily_df.empty:
+        latest_price = _round2(daily_df.iloc[0]['close'])
+    result['latest_price'] = latest_price
+
+    # 涨幅基于实时最新价和昨收
+    if latest_price is not None and prev_close is not None:
+        result['price_change_pct'] = _safe_pct(latest_price, prev_close)
+    elif latest_price is not None and prev_close_from_daily is not None:
+        result['price_change_pct'] = _safe_pct(latest_price, prev_close_from_daily)
+
+    # 3) ma7：历史 close（日线缓存）+ 最新价用分时替换，使 ma7 反映盘中实时价
+    if not daily_df.empty:
+        asc_df = daily_df.iloc[::-1].reset_index(drop=True)
+        if latest_price is not None:
+            asc_df.iloc[-1, asc_df.columns.get_loc('close')] = float(latest_price)
+        ma_df = ma_indicator.calculate(asc_df)
+        result['ma7'] = _round2(ma_df.iloc[-1]['ma7'])
+        result['dev_ma7_pct'] = _safe_pct(latest_price, result['ma7'])
 
     return result
 
