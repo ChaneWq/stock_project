@@ -13,7 +13,7 @@
 
 性能优化：
     - 日线缓存：日线数据日内不变，首次请求后缓存，后续刷新读缓存（省 N 次请求）
-    - 请求间隔：每只股票之间加 REQUEST_INTERVAL 秒间隔，防止请求过快触发限流
+    - 批量间隔：每 BATCH_SIZE 只后间隔 BATCH_INTERVAL 秒，防止请求过快触发限流
     - 数据源对象在 collect_all 中创建一次复用
 
 说明：
@@ -28,7 +28,7 @@ from datetime import datetime
 
 from pystock_data import BasicBars, BasicMinutesWithVR, MAIndicator
 
-from .config import REQUEST_INTERVAL, DAILY_CACHE_ENABLED
+from .config import BATCH_SIZE, BATCH_INTERVAL, DAILY_CACHE_ENABLED
 
 
 # 日线数据缓存：key=(code, date_str)，value=daily_df
@@ -187,9 +187,9 @@ def collect_all(stocks, date=None):
 
     results = []
     for i, stock in enumerate(stocks):
-        # 请求间隔：第一只不间隔，后续每只之间加间隔，防止请求过快触发限流
-        if i > 0 and REQUEST_INTERVAL > 0:
-            time.sleep(REQUEST_INTERVAL)
+        # 批量间隔：每 BATCH_SIZE 只后间隔一次，防止请求过快触发限流
+        if i > 0 and i % BATCH_SIZE == 0 and BATCH_INTERVAL > 0:
+            time.sleep(BATCH_INTERVAL)
 
         code = stock.get('code', '')
         name = stock.get('name', '')
