@@ -46,49 +46,57 @@ class TdxSource:
         - 多个TdxSource实例共享同一个client（同market）
     """
     
-    def __init__(self, market: str = 'std'):
+    def __init__(self, market: str = 'std', thread_safe: bool = False):
         """
         初始化通达信数据源
-        
+
         Args:
             market (str): 通达信市场参数，默认为'std'
-        
+            thread_safe (bool): 是否使用线程独立 client
+                - False（默认）：共享 client（非线程安全，串行场景用）
+                - True：线程独立 client（多线程并发场景用，基于 threading.local）
+
         Note:
             - 不立即初始化client
             - client由ClientManager统一管理
             - 首次使用时通过ClientManager获取（懒加载）
         """
         self.market = market
-        # 不持有client实例，通过ClientManager获取
-    
+        self.thread_safe = thread_safe
+
+    def _get_client(self):
+        """获取 client（根据 thread_safe 选择共享或线程独立）"""
+        if self.thread_safe:
+            return ClientManager.get_thread_client(self.market)
+        return ClientManager.get_client(self.market)
+
     def fetch_bars(self, code: str, freq: int, offset: int) -> pd.DataFrame:
         """
         获取K线数据
-        
+
         Args:
             code (str): 股票代码（6位字符串）
             freq (int): K线频率（9=日线, 5=周线, 6=月线）
             offset (int): 获取的数据数量
-        
+
         Returns:
             DataFrame: K线数据（标准化后的DataFrame）
-        
+
         Raises:
             Exception: 数据获取失败时抛出异常
-        
+
         Example:
             >>> source = TdxSource()
             >>> day_df = source.fetch_bars('000400', 9, 100)  # 日线
             >>> week_df = source.fetch_bars('000400', 5, 100) # 周线
             >>> month_df = source.fetch_bars('000400', 6, 100) # 月线
-        
+
         Note:
             - client通过ClientManager获取（缓存复用）
             - 首次调用时才初始化client（懒加载）
         """
         try:
-            # 通过ClientManager获取client（缓存复用）
-            client = ClientManager.get_client(self.market)
+            client = self._get_client()
             
             # 调用mootdx获取原始数据
             df = client.bars(symbol=code, frequency=freq, offset=offset)
@@ -131,8 +139,8 @@ class TdxSource:
         """
         try:
             # 通过ClientManager获取client（缓存复用）
-            client = ClientManager.get_client(self.market)
-            
+            client = self._get_client()
+
             # 调用mootdx获取分时数据
             df = client.minutes(symbol=code, date=date)
             
@@ -195,8 +203,8 @@ class TdxSource:
         """
         try:
             # 通过ClientManager获取client（缓存复用）
-            client = ClientManager.get_client(self.market)
-            
+            client = self._get_client()
+
             # 多取一些数据确保能覆盖目标日期
             offset = n + 50 if date else n + 10
             df = client.bars(symbol=code, frequency=9, offset=offset)  # 日线

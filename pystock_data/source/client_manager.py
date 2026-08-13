@@ -5,12 +5,14 @@
 - 管理通达信客户端实例的创建和缓存
 - 确保全局只有一个client实例，避免重复初始化
 - 支持多市场配置
+- 支持线程独立 client（get_thread_client）
 
 作者：PyStock项目组
 日期：2026-06-26
 版本：1.0.0
 """
 
+import threading
 from mootdx.quotes import Quotes
 
 
@@ -42,37 +44,74 @@ class ClientManager:
     
     # 客户端缓存字典：{market: client_instance}
     _clients = {}
-    
+    # 线程独立 client 存储（每个线程一份，互不影响）
+    _thread_local = threading.local()
+
     @classmethod
     def get_client(cls, market: str = 'std') -> Quotes:
         """
         获取或创建客户端
-        
+
         Args:
             market (str): 通达信市场参数，默认为'std'
-        
+
         Returns:
             Quotes: 通达信客户端实例
-        
+
         实现机制：
             1. 首次调用：创建client并缓存
             2. 后续调用：从缓存中获取（避免重复初始化）
-        
+
         Example:
             >>> client1 = ClientManager.get_client('std')
             >>> client2 = ClientManager.get_client('std')
             >>> assert client1 is client2  # 同一个实例
-        
+
         Note:
             - 同一个market只创建一次client
             - 不同market有不同client实例
+            - 所有线程共享同一 client（非线程安全，并发场景用 get_thread_client）
         """
         # 如果缓存中不存在，创建并缓存
         if market not in cls._clients:
             cls._clients[market] = Quotes.factory(market=market)
-        
+
         # 返回缓存的client
         return cls._clients[market]
+
+    @classmethod
+    def get_thread_client(cls, market: str = 'std') -> Quotes:
+        """
+        获取线程独立的客户端
+
+        每个线程拥有独立的 client（基于 threading.local），
+        避免多线程共享同一 socket 连接导致数据错乱。
+
+        Args:
+            market (str): 通达信市场参数，默认为'std'
+
+        Returns:
+            Quotes: 当前线程专属的客户端实例
+
+        实现机制：
+            1. 首次调用（当前线程）：创建 client 并绑定到线程本地存储
+            2. 后续调用（同一线程）：直接返回该线程的 client
+
+        Example:
+            >>> # 在工作线程中
+            >>> client = ClientManager.get_thread_client('std')
+            >>> # 同一线程再次调用返回同一实例，不同线程返回不同实例
+
+        Note:
+            - 用于多线程并发采集场景
+            - 每个线程的 client 独立，互不影响
+            - 线程结束后 client 不自动释放（线程池复用线程时仍可用）
+        """
+        if not hasattr(cls._thread_local, 'clients'):
+            cls._thread_local.clients = {}
+        if market not in cls._thread_local.clients:
+            cls._thread_local.clients[market] = Quotes.factory(market=market)
+        return cls._thread_local.clients[market]
     
     @classmethod
     def clear_cache(cls) -> None:

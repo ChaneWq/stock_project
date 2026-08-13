@@ -43,13 +43,16 @@ class BasicBars:
         amount: 成交额
     """
     
-    def __init__(self):
+    def __init__(self, market: str = 'std', thread_safe: bool = False):
         """
         初始化基础K线数据类
-        
-        创建TdxSource数据源实例
+
+        Args:
+            market (str): 通达信市场参数，默认为'std'
+            thread_safe (bool): 是否使用线程独立 client，默认 False
+                多线程并发采集时设为 True，每个线程拥有独立 client
         """
-        self.source = TdxSource()
+        self.source = TdxSource(market=market, thread_safe=thread_safe)
     
     def get_daily(self, code: str, n: int = 400) -> pd.DataFrame:
         """

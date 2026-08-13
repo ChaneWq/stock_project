@@ -47,14 +47,16 @@ class BasicMinutesWithVR:
         - 适用于分时量比分析场景
     """
     
-    def __init__(self, market: str = 'std'):
+    def __init__(self, market: str = 'std', thread_safe: bool = False):
         """
         初始化带量比的分时数据类
-        
+
         Args:
             market (str): 通达信市场参数，默认为'std'
+            thread_safe (bool): 是否使用线程独立 client，默认 False
+                多线程并发采集时设为 True，每个线程拥有独立 client
         """
-        self.source = TdxSource(market=market)
+        self.source = TdxSource(market=market, thread_safe=thread_safe)
         self._avg_vol_per_minute = None  # 缓存分钟均量
         self._prev_n_day_vol_list = None  # 缓存过去n日成交量列表
         self._prev_close = None  # 缓存昨收价
