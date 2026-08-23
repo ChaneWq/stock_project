@@ -11,9 +11,17 @@
 版本：1.0.0
 """
 
+import logging
+
 import pandas as pd
 import numpy as np
 from ..source import TdxSource
+
+# 库内日志：默认静默，应用可通过配置logging启用
+# propagate=False：第三方库(tdxpy等)可能调用basicConfig配置root logger，隔离传播保证库内日志不外泄
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
+logger.propagate = False
 
 
 class BasicMinutesWithVR:
@@ -90,14 +98,14 @@ class BasicMinutesWithVR:
         minute_df = self.source.fetch_minutes(code, date)
         
         if minute_df.empty:
-            print(f"[BasicMinutesWithVR] 未获取到 {code} 在 {date} 的分时数据")
+            logger.warning(f"[BasicMinutesWithVR] 未获取到 {code} 在 {date} 的分时数据")
             return pd.DataFrame()
         
         # Step 2: 获取过去n日日线成交量
         day_data = self.source.fetch_prev_n_day_vol(code, n, date)
         
         if not day_data:
-            print(f"[BasicMinutesWithVR] 未获取到 {code} 过去{n}日日线数据")
+            logger.warning(f"[BasicMinutesWithVR] 未获取到 {code} 过去{n}日日线数据")
             return pd.DataFrame()
         
         vol_list = day_data['vol_list']
