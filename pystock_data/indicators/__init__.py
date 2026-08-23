@@ -9,11 +9,13 @@ from .kdj import KDJIndicator
 from .macd import MACDIndicator
 from .ma import MAIndicator
 from .vma import VolumeMAIndicator
+from .vwap import VWAPIndicator
 
 __all__ = [
     'IndicatorBase',
     'KDJIndicator',
     'MACDIndicator',
     'MAIndicator',
-    'VolumeMAIndicator'
+    'VolumeMAIndicator',
+    'VWAPIndicator'
 ]

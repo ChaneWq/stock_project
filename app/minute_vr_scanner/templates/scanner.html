@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>量比策略扫描</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: "Microsoft YaHei", sans-serif; background: #f5f6fa; padding: 16px; color: #333; }
+h1 { font-size: 20px; margin-bottom: 14px; }
+.panel { background: #fff; border-radius: 8px; padding: 14px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.panel h2 { font-size: 15px; margin-bottom: 10px; color: #2c3e50; }
+.form-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; align-items: center; }
+.form-item { display: flex; align-items: center; gap: 5px; }
+.form-item label { font-size: 13px; white-space: nowrap; }
+.form-item input, .form-item select { padding: 5px 8px; border: 1px solid #dcdfe6; border-radius: 4px; width: 90px; font-size: 13px; }
+.form-item input[type="text"] { width: 110px; }
+textarea { width: 100%; height: 110px; padding: 8px; border: 1px solid #dcdfe6; border-radius: 4px; font-family: Consolas, monospace; font-size: 13px; resize: vertical; }
+button { padding: 8px 22px; background: #409eff; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+button:disabled { background: #a0cfff; cursor: not-allowed; }
+button.danger { background: #f56c6c; }
+#progressWrap { display: none; margin-top: 10px; }
+#progressBar { height: 14px; background: #ebeef5; border-radius: 7px; overflow: hidden; }
+#progressFill { height: 100%; width: 0; background: #409eff; transition: width .3s; }
+#progressText { font-size: 13px; color: #666; margin-top: 4px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 7px 9px; border-bottom: 1px solid #ebeef5; text-align: right; white-space: nowrap; }
+th { background: #f5f7fa; cursor: pointer; user-select: none; }
+th:hover { background: #e8f0fe; }
+td:first-child, th:first-child { text-align: left; }
+tr.data-row { cursor: pointer; }
+tr.data-row:hover { background: #f0f7ff; }
+.up { color: #e74c3c; } .down { color: #27ae60; }
+.hit-periods { text-align: left; font-size: 12px; color: #666; }
+.empty { text-align: center; color: #999; padding: 20px; font-size: 13px; }
+/* 弹窗 */
+#modalMask { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100; }
+#modal { display: none; position: fixed; top: 4%; left: 50%; transform: translateX(-50%); width: 92%; max-width: 1050px; background: #fff; border-radius: 8px; z-index: 101; padding: 14px; }
+#modal h3 { font-size: 15px; margin-bottom: 8px; }
+#modalClose { float: right; background: #909399; padding: 3px 12px; font-size: 13px; }
+#chart { width: 100%; height: 400px; }
+#modalTip { font-size: 12px; color: #999; margin-top: 6px; }
+.strategy-params { border-top: 1px dashed #e4e7ed; padding-top: 8px; margin-top: 8px; }
+#strategyHint { font-size: 12px; color: #909399; }
+</style>
+</head>
+<body>
+<h1>量比策略扫描</h1>
+
+<!-- 参数区 -->
+<div class="panel">
+  <h2>扫描参数</h2>
+  <div class="form-row">
+    <div class="form-item"><label>策略</label>
+      <select id="strategy" onchange="onStrategyChange()">
+        <option value="vr_slope">vr_slope 量比斜率</option>
+        <option value="vr_anomaly">vr_anomaly 量比异动</option>
+      </select>
+    </div>
+    <div class="form-item"><label>日期</label><input type="text" id="date" placeholder="YYYYMMDD"></div>
+    <div class="form-item"><label>截至</label><input type="text" id="until" placeholder="HH:MM 如10:30"></div>
+    <div class="form-item"><label>基准n日</label><input type="number" id="n" value="5" min="1" max="30"></div>
+    <div class="form-item"><label>涨幅%</label>
+      <input type="number" id="change_min" value="-100" style="width:70px"> ~
+      <input type="number" id="change_max" value="100" style="width:70px">
+    </div>
+    <div class="form-item"><label><input type="checkbox" id="no_filter"> 不过滤创业板/科创板/北交所</label></div>
+  </div>
+  <div class="strategy-params" id="slopeParams">
+    <div class="form-row">
+      <div class="form-item"><label>窗口(分)</label><input type="number" id="vr_slope_window" value="3" min="2" max="30"></div>
+      <div class="form-item"><label>斜率阈值(度)</label><input type="number" id="vr_slope" value="5" step="0.5"></div>
+      <div class="form-item"><label>最少命中</label><input type="number" id="vr_slope_min_hits" value="3" min="1"></div>
+      <div class="form-item"><label>合并间隔</label><input type="number" id="vr_slope_merge_gap" value="2" min="1"></div>
+      <div class="form-item"><label><input type="checkbox" id="no_vr_up"> 不要求量比增加</label></div>
+      <div class="form-item"><label><input type="checkbox" id="no_vr_slope_price_up"> 不要求价格上涨</label></div>
+    </div>
+  </div>
+  <div class="strategy-params" id="anomalyParams" style="display:none">
+    <div class="form-row">
+      <div class="form-item"><label>窗口(分)</label><input type="number" id="anomaly_window" value="3" min="2" max="30"></div>
+      <div class="form-item"><label>显性角度(度)</label><input type="number" id="anomaly_steep" value="5" step="0.5"></div>
+      <div class="form-item"><label>隐性角度差(度)</label><input type="number" id="anomaly_turn" value="8" step="0.5"></div>
+      <div class="form-item"><label>最少命中</label><input type="number" id="anomaly_min_hits" value="1" min="1"></div>
+      <div class="form-item"><label>合并间隔</label><input type="number" id="anomaly_merge_gap" value="2" min="1"></div>
+      <div class="form-item"><label><input type="checkbox" id="no_anomaly_price_up"> 不要求价格不跌</label></div>
+    </div>
+  </div>
+  <div class="form-row" style="margin-top:8px">
+    <div class="form-item" style="flex:1">
+      <label style="align-self:flex-start">股票代码（每行一个）</label>
+      <textarea id="codes"></textarea>
+    </div>
+  </div>
+  <div class="form-row">
+    <button id="scanBtn" onclick="startScan()">开始扫描</button>
+    <span id="strategyHint"></span>
+  </div>
+  <div id="progressWrap">
+    <div id="progressBar"><div id="progressFill"></div></div>
+    <div id="progressText"></div>
+  </div>
+</div>
+
+<!-- 结果区 -->
+<div class="panel">
+  <h2>扫描结果 <span id="resultSummary" style="font-size:13px;color:#666;font-weight:normal"></span></h2>
+  <div id="resultTable"><div class="empty">尚未扫描</div></div>
+</div>
+
+<!-- 分时图弹窗 -->
+<div id="modalMask" onclick="closeModal()"></div>
+<div id="modal">
+  <h3><button id="modalClose" onclick="closeModal()">关闭</button><span id="modalTitle">分时量比</span></h3>
+  <div id="chart"></div>
+  <div id="modalTip">黄色区域为策略命中时段；左轴价格（元），右轴量比。虚线为昨收。</div>
+</div>
+
+<script>
+let pollTimer = null;
+let chart = null;
+let sortKey = 'score';
+let sortAsc = false;
+let currentResults = [];
+
+// ---------- 初始化 ----------
+window.onload = async () => {
+  const resp = await fetch('/api/init');
+  const data = await resp.json();
+  document.getElementById('date').value = data.date;
+  document.getElementById('codes').value = data.codes;
+  onStrategyChange();
+};
+
+function onStrategyChange() {
+  const s = document.getElementById('strategy').value;
+  document.getElementById('slopeParams').style.display = s === 'vr_slope' ? '' : 'none';
+  document.getElementById('anomalyParams').style.display = s === 'vr_anomaly' ? '' : 'none';
+}
+
+// ---------- 扫描 ----------
+async function startScan() {
+  const codes = document.getElementById('codes').value.trim();
+  if (!codes) { alert('请输入股票代码'); return; }
+
+  const payload = {
+    strategy: document.getElementById('strategy').value,
+    date: document.getElementById('date').value.trim(),
+    until: document.getElementById('until').value.trim(),
+    n: document.getElementById('n').value,
+    change_min: document.getElementById('change_min').value,
+    change_max: document.getElementById('change_max').value,
+    no_filter: document.getElementById('no_filter').checked,
+    codes,
+  };
+  // 策略参数
+  for (const id of ['vr_slope_window','vr_slope','vr_slope_min_hits','vr_slope_merge_gap',
+                    'anomaly_window','anomaly_steep','anomaly_turn','anomaly_min_hits','anomaly_merge_gap']) {
+    payload[id] = document.getElementById(id).value;
+  }
+  payload.no_vr_up = document.getElementById('no_vr_up').checked;
+  payload.no_vr_slope_price_up = document.getElementById('no_vr_slope_price_up').checked;
+  payload.no_anomaly_price_up = document.getElementById('no_anomaly_price_up').checked;
+
+  document.getElementById('scanBtn').disabled = true;
+  document.getElementById('progressWrap').style.display = 'block';
+  document.getElementById('resultSummary').textContent = '';
+
+  try {
+    const resp = await fetch('/api/scan', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (data.error) { alert(data.error); resetScanUI(); return; }
+    pollStatus(data.task_id);
+  } catch (e) {
+    alert('请求失败: ' + e);
+    resetScanUI();
+  }
+}
+
+function resetScanUI() {
+  document.getElementById('scanBtn').disabled = false;
+  document.getElementById('progressWrap').style.display = 'none';
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+async function pollStatus(taskId) {
+  pollTimer = setInterval(async () => {
+    try {
+      const resp = await fetch('/api/status?task_id=' + taskId);
+      const t = await resp.json();
+      updateProgress(t.done, t.total);
+      if (t.status === 'done') {
+        resetScanUI();
+        currentResults = t.results || [];
+        renderTable(currentResults, t.strategy, t.date);
+      } else if (t.status === 'error') {
+        resetScanUI();
+        alert('扫描失败: ' + t.error);
+      }
+    } catch (e) { /* 轮询异常忽略，下次重试 */ }
+  }, 1000);
+}
+
+function updateProgress(done, total) {
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressText').textContent = `扫描中: ${done}/${total} (${pct}%)`;
+}
+
+// ---------- 结果表 ----------
+const COLUMNS = {
+  vr_slope: [
+    {key: 'code', label: '代码'},
+    {key: 'score', label: '综合评分', fmt: v => v.toFixed(4)},
+    {key: 'avg_vr_slope_deg', label: '量比斜率(°)', fmt: v => v.toFixed(1)},
+    {key: 'hit_windows', label: '命中窗口', fmt: (v, r) => v + '/' + r.total_windows},
+    {key: 'change_pct', label: '涨幅%', cls: v => v >= 0 ? 'up' : 'down', fmt: v => (v >= 0 ? '+' : '') + v.toFixed(2)},
+    {key: 'price_slope', label: '价格斜率', fmt: v => v.toFixed(6)},
+    {key: 'hit_periods', label: '命中时段', cls: () => 'hit-periods'},
+  ],
+  vr_anomaly: [
+    {key: 'code', label: '代码'},
+    {key: 'score', label: '综合评分', fmt: v => v.toFixed(4)},
+    {key: 'steep_hits', label: '显性'},
+    {key: 'turn_hits', label: '隐性'},
+    {key: 'max_angle_diff', label: '最大角度差(°)', fmt: v => v.toFixed(1)},
+    {key: 'hit_windows', label: '命中窗口', fmt: (v, r) => v + '/' + r.total_windows},
+    {key: 'change_pct', label: '涨幅%', cls: v => v >= 0 ? 'up' : 'down', fmt: v => (v >= 0 ? '+' : '') + v.toFixed(2)},
+    {key: 'hit_periods', label: '命中时段', cls: () => 'hit-periods'},
+  ],
+};
+
+function renderTable(results, strategy, date) {
+  const cols = COLUMNS[strategy] || COLUMNS.vr_slope;
+  document.getElementById('resultSummary').textContent = `策略: ${strategy}  日期: ${date}  命中: ${results.length}只`;
+
+  if (!results.length) {
+    document.getElementById('resultTable').innerHTML = '<div class="empty">无命中结果</div>';
+    return;
+  }
+
+  // 排序
+  const sorted = [...results].sort((a, b) => {
+    let va = a[sortKey], vb = b[sortKey];
+    if (typeof va === 'string') { return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va); }
+    return sortAsc ? va - vb : vb - va;
+  });
+
+  let html = '<table><thead><tr>';
+  html += '<th>排名</th>';
+  for (const c of cols) {
+    const arrow = sortKey === c.key ? (sortAsc ? ' ▲' : ' ▼') : '';
+    html += `<th onclick="sortBy('${c.key}')">${c.label}${arrow}</th>`;
+  }
+  html += '</tr></thead><tbody>';
+  sorted.forEach((r, i) => {
+    html += `<tr class="data-row" onclick="showDetail('${r.code}', '${date}')"><td>${i + 1}</td>`;
+    for (const c of cols) {
+      const v = r[c.key];
+      const cls = c.cls ? c.cls(v, r) : '';
+      const txt = c.fmt ? c.fmt(v, r) : v;
+      html += `<td class="${cls}">${txt}</td>`;
+    }
+    html += '</tr>';
+  });
+  html += '</tbody></table>';
+  document.getElementById('resultTable').innerHTML = html;
+}
+
+function sortBy(key) {
+  if (sortKey === key) { sortAsc = !sortAsc; } else { sortKey = key; sortAsc = false; }
+  renderTable(currentResults, document.getElementById('strategy').value, document.getElementById('date').value.trim());
+}
+
+// ---------- 分时图弹窗 ----------
+async function showDetail(code, date) {
+  const n = document.getElementById('n').value;
+  const resp = await fetch(`/api/detail?code=${code}&date=${date}&n=${n}`);
+  const data = await resp.json();
+  if (data.error) { alert(data.error); return; }
+
+  // 涨幅序列：相对昨收（左Y轴显示涨幅%，不再显示价格）
+  const pc = data.prev_close;
+  const pct = data.price.map(p => (p - pc) / pc * 100);
+  // 均价线涨幅序列（VWAP相对昨收，共用左轴）
+  const avgPct = data.avg_price.map(p => (p - pc) / pc * 100);
+  const fmtPct = v => (v >= 0 ? '+' : '') + v.toFixed(2) + '%';
+  // 开盘（9:30）涨幅与量比
+  const openPct = pct.length ? pct[0] : 0;
+  const openVr = data.volume_ratio.length ? data.volume_ratio[0] : 0;
+
+  document.getElementById('modalMask').style.display = 'block';
+  document.getElementById('modal').style.display = 'block';
+  document.getElementById('modalTitle').textContent =
+    `${code} 分时量比  ${date}  昨收 ${pc} | 开盘涨幅 ${fmtPct(openPct)} | 9:30涨幅 ${fmtPct(openPct)} | 9:30量比 ${openVr}`;
+
+  if (!chart) chart = echarts.init(document.getElementById('chart'));
+  chart.resize();
+
+  // 找到该股票的命中时段（markArea 用）
+  const row = currentResults.find(r => r.code === code);
+  const markAreas = [];
+  if (row && row.hit_periods) {
+    for (const p of row.hit_periods.split(', ')) {
+      const [s, e] = p.split('-');
+      if (s && e) markAreas.push([{xAxis: s}, {xAxis: e}]);
+    }
+  }
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      formatter: (params) => {
+        let html = params[0].axisValue;
+        for (const p of params) {
+          if (p.seriesName === '涨幅') html += `<br/>${p.marker}涨幅：${fmtPct(p.value)}`;
+          else if (p.seriesName === '均价') html += `<br/>${p.marker}均价：${fmtPct(p.value)}（${data.avg_price[p.dataIndex]}）`;
+          else html += `<br/>${p.marker}量比：${p.value}`;
+        }
+        return html;
+      },
+    },
+    legend: {data: ['涨幅', '均价', '量比']},
+    grid: {left: 60, right: 60, top: 40, bottom: 60},
+    dataZoom: [{type: 'inside'}, {type: 'slider', height: 18, bottom: 8}],
+    xAxis: {type: 'category', data: data.time},
+    yAxis: [
+      {type: 'value', name: '涨幅%', scale: true, axisLabel: {formatter: v => v.toFixed(1) + '%'}},
+      {type: 'value', name: '量比', scale: true},
+    ],
+    series: [
+      {
+        name: '涨幅', type: 'line', data: pct.map(v => +v.toFixed(3)), showSymbol: false,
+        lineStyle: {width: 1.5},
+        markLine: {silent: true, symbol: 'none', lineStyle: {type: 'dashed', color: '#999'},
+                   data: [{yAxis: 0, label: {formatter: '昨收0%'}}]},
+        markArea: {silent: true, itemStyle: {color: 'rgba(255, 200, 0, 0.18)'}, data: markAreas},
+      },
+      {
+        name: '均价', type: 'line', data: avgPct.map(v => +v.toFixed(3)), showSymbol: false,
+        lineStyle: {width: 1.2, color: '#f1c40f'}, itemStyle: {color: '#f1c40f'},
+      },
+      {name: '量比', type: 'line', yAxisIndex: 1, data: data.volume_ratio, showSymbol: false,
+       lineStyle: {width: 1, color: '#9b59b6'}, itemStyle: {color: '#9b59b6'}},
+    ],
+  }, true);
+}
+
+function closeModal() {
+  document.getElementById('modalMask').style.display = 'none';
+  document.getElementById('modal').style.display = 'none';
+}
+</script>
+</body>
+</html>

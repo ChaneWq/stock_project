@@ -21,6 +21,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import pandas as pd
 
 from pystock_data.basic import BasicBars
+from pystock_data.indicators import VWAPIndicator
 
 from . import config
 from .data_provider import DataProvider
@@ -28,6 +29,9 @@ from .strategies import get_strategy
 
 # 线程本地存储：每线程独立DataProvider（client隔离，_prev_close缓存不竞争）
 _local = threading.local()
+
+# 分时均价指标（纯计算无状态，模块级复用）
+_vwap = VWAPIndicator()
 
 # 进度显示锁
 _print_lock = threading.Lock()
@@ -69,7 +73,7 @@ def _get_provider() -> DataProvider:
 
 
 def scan(codes, date, strategy_id, n=5, until_hour=None, until_minute=None,
-         change_min=-100, change_max=100, **strategy_kwargs):
+         change_min=-100, change_max=100, progress_callback=None, **strategy_kwargs):
     """
     并发扫描股票列表，按策略评分
 
@@ -82,6 +86,7 @@ def scan(codes, date, strategy_id, n=5, until_hour=None, until_minute=None,
         until_minute: 截至时间-分钟，None表示全天
         change_min: 涨幅下限(%)，默认-100不限
         change_max: 涨幅上限(%)，默认100不限
+        progress_callback: 进度回调 callback(done, total)，None则打印进度（CLI行为）
         **strategy_kwargs: 策略参数，透传给策略的evaluate函数
 
     返回:
@@ -97,8 +102,9 @@ def scan(codes, date, strategy_id, n=5, until_hour=None, until_minute=None,
             return _scan_single(code, date, strategy_fn, n, until_hour, until_minute,
                                 change_min, change_max, **strategy_kwargs)
         except Exception as e:
-            with _print_lock:
-                print(f"\n[Error] {code}: {e}")
+            if progress_callback is None:
+                with _print_lock:
+                    print(f"\n[Error] {code}: {e}")
             return None
 
     def on_done(future):
@@ -107,7 +113,10 @@ def scan(codes, date, strategy_id, n=5, until_hour=None, until_minute=None,
             results.append(result)
         with _print_lock:
             done_count[0] += 1
-            print(f"\r扫描中: {done_count[0]}/{total}", end='', flush=True)
+            if progress_callback is not None:
+                progress_callback(done_count[0], total)
+            else:
+                print(f"\r扫描中: {done_count[0]}/{total}", end='', flush=True)
 
     with ThreadPoolExecutor(max_workers=config.MAX_WORKERS) as executor:
         # 分批提交：每批之间间隔，防请求过快
@@ -119,11 +128,58 @@ def scan(codes, date, strategy_id, n=5, until_hour=None, until_minute=None,
             if config.BATCH_INTERVAL > 0 and i + config.BATCH_SIZE < total:
                 time.sleep(config.BATCH_INTERVAL)
 
-    print()  # 换行
+    if progress_callback is None:
+        print()  # 换行
 
     # 按综合评分降序
     results.sort(key=lambda x: x['score'], reverse=True)
     return results
+
+
+def get_minute_detail(code, date, n=5):
+    """
+    获取单只股票分时明细（供Web图表展示）
+
+    复用量比基准缓存与DataProvider，与扫描同数据源。
+
+    Args:
+        code: 股票代码
+        date: 日期（YYYYMMDD）
+        n: 过去n个交易日（量比基准）
+
+    Returns:
+        dict: {
+            'time': ['09:30', ...],
+            'price': [...],
+            'avg_price': [...],          # 分时均价线（VWAP）
+            'volume_ratio': [...],
+            'prev_close': float,
+            'avg_vol_per_minute': float
+        }
+        失败返回 None
+    """
+    try:
+        provider = _get_provider()
+        df, prev_close = provider.get_strategy_df(code, date, n)
+        if df is None:
+            return None
+
+        # 分时均价线（累计成交额/累计成交量）
+        df = _vwap.calculate(df)
+
+        # 拼时间字符串 HH:MM
+        times = ["%02d:%02d" % (int(h), int(m)) for h, m in zip(df['hour'], df['minute'])]
+
+        return {
+            'time': times,
+            'price': [round(float(p), 3) for p in df['price']],
+            'avg_price': [round(float(p), 3) for p in df['avg_price']],
+            'volume_ratio': [round(float(v), 3) for v in df['volume_ratio']],
+            'prev_close': round(float(prev_close), 3),
+            'avg_vol_per_minute': round(float(df['avg_vol_per_minute'].iloc[0]), 3),
+        }
+    except Exception:
+        return None
 
 
 def _scan_single(code, date, strategy_fn, n, until_hour=None, until_minute=None,
