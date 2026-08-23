@@ -43,6 +43,10 @@ def standardize_fields(df: pd.DataFrame, stock_code: str = None) -> pd.DataFrame
         # 然后reset_index，将datetime索引转为datetime列
         df = df.reset_index()
     
+    # mootdx新版同时返回vol和volume两列，重命名前先删除vol避免产生重复的volume列
+    if 'volume' in df.columns and 'vol' in df.columns:
+        df = df.drop(columns=['vol'])
+
     # 字段映射：原始字段名 → 标准字段名
     field_mapping = {
         'open': 'open',
