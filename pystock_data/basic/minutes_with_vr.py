@@ -69,47 +69,57 @@ class BasicMinutesWithVR:
         self._prev_n_day_vol_list = None  # 缓存过去n日成交量列表
         self._prev_close = None  # 缓存昨收价
     
-    def get_data(self, code: str, date: str, n: int = 5) -> pd.DataFrame:
+    def get_data(self, code: str, date: str, n: int = 5,
+                 prev_day_vol_list: list = None) -> pd.DataFrame:
         """
         获取带量比的分时数据
-        
+
         Args:
             code (str): 股票代码（6位字符串）
             date (str): 日期（格式YYYYMMDD）
             n (int): 过去n个交易日，默认5
-        
+            prev_day_vol_list (list, optional): 外部注入的过去n日成交量列表。
+                传入时跳过网络请求（调用方已持有日线数据时复用，减少重复请求）；
+                None则自动从数据源获取。
+
         Returns:
             DataFrame: 带量比的分时数据
-        
+
         Raises:
             ValueError: 如果缺少必需字段
-        
+
         Example:
             >>> minutes_vr = BasicMinutesWithVR()
             >>> vr_df = minutes_vr.get_data('000400', '20260624', n=5)
-            >>> # 返回240行分时数据（包含量比）
-        
+            >>> # 包含240行分时数据（包含量比）
+            >>> # 复用已有日线数据（性能优化）：
+            >>> vr_df = minutes_vr.get_data('000400', '20260624', n=5, prev_day_vol_list=[...])
+
         Note:
-            - 自动获取过去n日日线数据
+            - 自动获取过去n日日线数据（除非外部注入 prev_day_vol_list）
             - 计算量比并添加到分时数据
             - 数据量比BasicMinutes多
         """
         # Step 1: 获取当日分时数据
         minute_df = self.source.fetch_minutes(code, date)
-        
+
         if minute_df.empty:
             logger.warning(f"[BasicMinutesWithVR] 未获取到 {code} 在 {date} 的分时数据")
             return pd.DataFrame()
-        
-        # Step 2: 获取过去n日日线成交量
-        day_data = self.source.fetch_prev_n_day_vol(code, n, date)
-        
-        if not day_data:
-            logger.warning(f"[BasicMinutesWithVR] 未获取到 {code} 过去{n}日日线数据")
-            return pd.DataFrame()
-        
-        vol_list = day_data['vol_list']
-        self._prev_close = day_data['prev_close']
+
+        # Step 2: 过去n日日线成交量（外部注入则跳过网络请求）
+        if prev_day_vol_list is not None:
+            vol_list = prev_day_vol_list
+            self._prev_close = None
+        else:
+            day_data = self.source.fetch_prev_n_day_vol(code, n, date)
+
+            if not day_data:
+                logger.warning(f"[BasicMinutesWithVR] 未获取到 {code} 过去{n}日日线数据")
+                return pd.DataFrame()
+
+            vol_list = day_data['vol_list']
+            self._prev_close = day_data['prev_close']
         
         # Step 3: 计算过去n日每分钟平均成交量
         self._avg_vol_per_minute = self._calc_avg_vol_per_minute(vol_list, n)

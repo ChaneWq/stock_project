@@ -42,3 +42,4 @@ Thumbs.db
 
 # 本地配置（不推送）
 app/stock_monitor/stocks.csv
+app/database/feature_import/config.ini

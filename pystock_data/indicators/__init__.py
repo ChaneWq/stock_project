@@ -5,17 +5,27 @@
 """
 
 from .base import IndicatorBase
+from .bbi import BBIIndicator
 from .kdj import KDJIndicator
 from .macd import MACDIndicator
 from .ma import MAIndicator
+from .needle import DZSIndicator, DZTIndicator
 from .vma import VolumeMAIndicator
 from .vwap import VWAPIndicator
+from .zx import ZXBullBearLineIndicator, ZXShortTermTrendIndicator
+from .zxt import ZXTIndicator
 
 __all__ = [
     'IndicatorBase',
+    'BBIIndicator',
+    'DZSIndicator',
+    'DZTIndicator',
     'KDJIndicator',
     'MACDIndicator',
     'MAIndicator',
     'VolumeMAIndicator',
-    'VWAPIndicator'
+    'VWAPIndicator',
+    'ZXBullBearLineIndicator',
+    'ZXShortTermTrendIndicator',
+    'ZXTIndicator',
 ]

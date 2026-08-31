@@ -1,0 +1,22 @@
+; 股票特征入库配置模板
+; 使用方法：复制本文件为 config.ini（同目录），填入真实连接信息
+; config.ini 已被 .gitignore 排除，不会提交到 git
+
+[database]
+host = 10.1.3.40
+port = 9030
+user = your_user
+password = your_password
+database = your_db
+
+[import]
+; 特征表（表需已存在，本工具只插入不建表）
+table_name = stock_features4
+; 股票清单表
+stock_list_table = sc
+; 默认导入窗口（天）
+date_window_days = 4
+; 日线拉取条数（需覆盖最长指标周期 MA250）
+bars_offset = 1800
+; 并发线程数
+max_workers = 6
