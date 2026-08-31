@@ -14,6 +14,7 @@ MACD指标计算模块
 import pandas as pd
 import numpy as np
 from .base import IndicatorBase
+from .tdx import MACD as tdx_MACD
 
 
 class MACDIndicator(IndicatorBase):
@@ -81,20 +82,22 @@ class MACDIndicator(IndicatorBase):
         # 复制DataFrame避免修改原数据
         df = df.copy()
         
-        # 计算快速EMA
-        ema_fast = df['close'].ewm(span=self.fast_period, adjust=False).mean()
-        
-        # 计算慢速EMA
-        ema_slow = df['close'].ewm(span=self.slow_period, adjust=False).mean()
-        
+        # 公式来源：tdx 公式函数库 MACD（DIF/DEA/MACD柱）
+        dif, dea, macd = tdx_MACD(
+            df['close'].values,
+            self.fast_period,
+            self.slow_period,
+            self.signal_period
+        )
+
         # 计算DIF（快线 - 慢线）
-        df['macd_dif'] = ema_fast - ema_slow
+        df['macd_dif'] = dif
         
         # 计算DEA（DIF的signal_period周期EMA）
-        df['macd_dea'] = df['macd_dif'].ewm(span=self.signal_period, adjust=False).mean()
+        df['macd_dea'] = dea
         
         # 计算MACD柱（2*(DIF - DEA)）
-        df['macd_macd'] = 2 * (df['macd_dif'] - df['macd_dea'])
+        df['macd_macd'] = macd
         
         # 保留两位小数
         df['macd_dif'] = df['macd_dif'].round(2)

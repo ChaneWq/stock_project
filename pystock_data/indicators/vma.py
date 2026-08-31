@@ -14,6 +14,7 @@
 import pandas as pd
 from typing import List
 from .base import IndicatorBase
+from .tdx import MA as tdx_MA
 
 
 class VolumeMAIndicator(IndicatorBase):
@@ -94,11 +95,14 @@ class VolumeMAIndicator(IndicatorBase):
 
         # 计算各周期成交量均线
         for period in use_periods:
+            # 公式来源：tdx 公式函数库 MA（标准滚动均值，前 N-1 行为 NaN）
+            vma = pd.Series(tdx_MA(df['volume'].values, period), index=df.index)
+            # 前 period-1 行用部分窗口均值补齐（保持历史行为：min_periods=1）
+            vma = vma.fillna(df['volume'].expanding().mean())
             # 成交量均线字段名：vma5, vma10等
             field_name = f'vma{period}'
-            df[field_name] = df['volume'].rolling(window=period, min_periods=1).mean()
             # 保留两位小数
-            df[field_name] = df[field_name].round(2)
+            df[field_name] = vma.round(2)
 
         return df
 
@@ -114,30 +118,3 @@ class VolumeMAIndicator(IndicatorBase):
             >>> periods = vma.get_periods()
         """
         return self.periods
-
-    def _validate_periods(self, periods: List[int]) -> None:
-        """
-        验证周期参数合法性
-
-        Args:
-            periods (List[int]): 待验证的周期列表
-
-        Raises:
-            ValueError: 当参数不合法时抛出异常
-
-        验证规则：
-            - periods必须为列表类型
-            - 周期列表不能为空
-            - 每个周期必须为正整数
-        """
-        if not isinstance(periods, list):
-            raise ValueError(f"periods必须为列表类型，当前类型: {type(periods).__name__}")
-
-        if len(periods) == 0:
-            raise ValueError("周期列表不能为空")
-
-        for period in periods:
-            if not isinstance(period, int):
-                raise ValueError(f"周期参数必须为整数，当前值: {period} (类型: {type(period).__name__})")
-            if period <= 0:
-                raise ValueError(f"周期参数必须为正整数，当前值: {period}")

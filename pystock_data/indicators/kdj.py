@@ -14,6 +14,7 @@ KDJ指标计算模块
 import pandas as pd
 import numpy as np
 from .base import IndicatorBase
+from .tdx import HHV, LLV, SMA
 
 
 class KDJIndicator(IndicatorBase):
@@ -82,8 +83,12 @@ class KDJIndicator(IndicatorBase):
         df = df.copy()
         
         # 计算RSV（未成熟随机值）
-        low_n = df['low'].rolling(window=self.n, min_periods=1).min()
-        high_n = df['high'].rolling(window=self.n, min_periods=1).max()
+        # 公式来源：tdx 公式函数库 LLV/HHV（标准滚动极值，前 N-1 行为 NaN）
+        low_n = pd.Series(LLV(df['low'].values, self.n), index=df.index)
+        high_n = pd.Series(HHV(df['high'].values, self.n), index=df.index)
+        # 前 n-1 行用部分窗口极值补齐（保持历史行为：min_periods=1）
+        low_n = low_n.fillna(df['low'].expanding().min())
+        high_n = high_n.fillna(df['high'].expanding().max())
         
         rsv = (df['close'] - low_n) / (high_n - low_n) * 100
         
@@ -91,10 +96,13 @@ class KDJIndicator(IndicatorBase):
         rsv = rsv.fillna(50)
         
         # 计算K值（RSV的m1周期平滑）
-        df['kdj_k'] = rsv.ewm(com=self.m1 - 1, adjust=False).mean()
+        # 公式来源：tdx 公式函数库 SMA(X,M,1)，等价于 ewm(com=M-1)
+        k = SMA(rsv.values, self.m1, 1)
+        df['kdj_k'] = pd.Series(k, index=df.index)
         
         # 计算D值（K值的m2周期平滑）
-        df['kdj_d'] = df['kdj_k'].ewm(com=self.m2 - 1, adjust=False).mean()
+        d = SMA(k, self.m2, 1)
+        df['kdj_d'] = pd.Series(d, index=df.index)
         
         # 计算J值（3K - 2D）
         df['kdj_j'] = 3 * df['kdj_k'] - 2 * df['kdj_d']

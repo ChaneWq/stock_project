@@ -107,3 +107,31 @@ class IndicatorBase:
             >>> name = kdj.get_indicator_name()
         """
         return self.name
+    
+    @staticmethod
+    def _validate_periods(periods: List[int]) -> None:
+        """
+        验证周期参数合法性（MA/VMA等周期类指标共用）
+
+        Args:
+            periods (List[int]): 待验证的周期列表
+
+        Raises:
+            ValueError: 当参数不合法时抛出异常
+
+        验证规则：
+            - periods必须为列表类型
+            - 周期列表不能为空
+            - 每个周期必须为正整数
+        """
+        if not isinstance(periods, list):
+            raise ValueError(f"periods必须为列表类型，当前类型: {type(periods).__name__}")
+
+        if len(periods) == 0:
+            raise ValueError("周期列表不能为空")
+
+        for period in periods:
+            if not isinstance(period, int):
+                raise ValueError(f"周期参数必须为整数，当前值: {period} (类型: {type(period).__name__})")
+            if period <= 0:
+                raise ValueError(f"周期参数必须为正整数，当前值: {period}")

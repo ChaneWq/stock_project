@@ -14,6 +14,7 @@
 import pandas as pd
 from typing import List
 from .base import IndicatorBase
+from .tdx import MA as tdx_MA
 
 
 class MAIndicator(IndicatorBase):
@@ -102,11 +103,14 @@ class MAIndicator(IndicatorBase):
         
         # 计算各周期均线
         for period in use_periods:
+            # 公式来源：tdx 公式函数库 MA（标准滚动均值，前 N-1 行为 NaN）
+            ma = pd.Series(tdx_MA(df['close'].values, period), index=df.index)
+            # 前 period-1 行用部分窗口均值补齐（保持历史行为：min_periods=1）
+            ma = ma.fillna(df['close'].expanding().mean())
             # 均线字段名：ma5, ma10, ma20, ma60等
             field_name = f'ma{period}'
-            df[field_name] = df['close'].rolling(window=period, min_periods=1).mean()
             # 保留两位小数
-            df[field_name] = df[field_name].round(2)
+            df[field_name] = ma.round(2)
         
         return df
     
@@ -122,37 +126,3 @@ class MAIndicator(IndicatorBase):
             >>> periods = ma.get_periods()
         """
         return self.periods
-    
-    def _validate_periods(self, periods: List[int]) -> None:
-        """
-        验证周期参数合法性
-        
-        Args:
-            periods (List[int]): 待验证的周期列表
-        
-        Raises:
-            ValueError: 当参数不合法时抛出异常
-        
-        验证规则：
-            - periods必须为列表类型
-            - 周期列表不能为空
-            - 每个周期必须为正整数
-        
-        Example:
-            >>> ma = MAIndicator()
-            >>> ma._validate_periods([5, 10, 20])  # 合法
-            
-            >>> ma._validate_periods([5, '10', 20])  # 抛出ValueError
-            ValueError: 周期参数必须为正整数，当前值: 10
-        """
-        if not isinstance(periods, list):
-            raise ValueError(f"periods必须为列表类型，当前类型: {type(periods).__name__}")
-        
-        if len(periods) == 0:
-            raise ValueError("周期列表不能为空")
-        
-        for period in periods:
-            if not isinstance(period, int):
-                raise ValueError(f"周期参数必须为整数，当前值: {period} (类型: {type(period).__name__})")
-            if period <= 0:
-                raise ValueError(f"周期参数必须为正整数，当前值: {period}")
