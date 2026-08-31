@@ -9,6 +9,7 @@
 用法：
     python app/database/feature_import/main.py --dry-run --limit 5   # 直接运行（含sys.path引导）
     python -m app.database.feature_import.main --start 2026-08-25 --end 2026-08-29  # 模块方式
+    python app/database/feature_import/main.py --board main          # 仅沪深主板
 
 作者：PyStock项目组
 日期：2026-08-31
@@ -99,6 +100,30 @@ def process_stock(code: str, start_dt: str, end_dt: str,
 
 # ---------------- 股票清单 ---------------- #
 
+# 沪深主板代码前缀（600/601/603/605沪市主板，000/001/002/003深市主板，002中小板已并入）
+_MAIN_BOARD_PREFIXES = ('600', '601', '603', '605', '000', '001', '002', '003')
+
+
+def filter_board_codes(codes: list, board: str = 'all') -> list:
+    """
+    按板块过滤股票代码
+
+    Args:
+        codes (list): 股票代码列表
+        board (str): 'all' 全部（默认，不过滤） / 'main' 仅沪深主板
+
+    Returns:
+        list: 过滤后的股票代码列表
+
+    说明：
+        - 主板判定按代码前缀，排除创业板(30x)/科创板(688)/北交所(43/83/87/88/92)/B股(900/200)
+        - 清单表仅有code字段，前缀过滤不依赖表结构
+    """
+    if board != 'main':
+        return codes
+    return [c for c in codes if str(c).startswith(_MAIN_BOARD_PREFIXES)]
+
+
 def get_all_codes(writer: DorisWriter, stock_list_table: str) -> list:
     """从 DorisDB 股票清单表获取全部股票代码"""
     return writer.query_codes(f'SELECT code FROM {stock_list_table};')
@@ -107,7 +132,7 @@ def get_all_codes(writer: DorisWriter, stock_list_table: str) -> list:
 # ---------------- 主流程 ---------------- #
 
 def run(start_dt: str = None, end_dt: str = None, dry_run: bool = False,
-        limit: int = None) -> None:
+        limit: int = None, board: str = 'all') -> None:
     """
     执行特征导入
 
@@ -116,6 +141,7 @@ def run(start_dt: str = None, end_dt: str = None, dry_run: bool = False,
         end_dt (str, optional): 结束日期，默认今天
         dry_run (bool, optional): 只计算不写库
         limit (int, optional): 只处理前 N 只股票（验证用）
+        board (str, optional): 板块过滤，'all' 全部（默认） / 'main' 仅沪深主板
     """
     conf = CONFIG['import']
     if end_dt is None:
@@ -125,6 +151,10 @@ def run(start_dt: str = None, end_dt: str = None, dry_run: bool = False,
 
     writer = DorisWriter(CONFIG['db'], conf['table_name'])
     codes = get_all_codes(writer, conf['stock_list_table'])
+    total = len(codes)
+    codes = filter_board_codes(codes, board)
+    if board == 'main' and len(codes) < total:
+        print(f"主板过滤: {total} -> {len(codes)} 只（排除创业板/科创板/北交所/B股）")
     if limit:
         codes = codes[:limit]
 
@@ -181,9 +211,12 @@ def main():
     parser.add_argument('--end', help='结束日期 YYYY-MM-DD（默认今天）')
     parser.add_argument('--dry-run', action='store_true', help='只计算不写库')
     parser.add_argument('--limit', type=int, help='只处理前N只股票（验证用）')
+    parser.add_argument('--board', choices=['all', 'main'], default='all',
+                        help='板块过滤：all 全部（默认）/ main 仅沪深主板')
     args = parser.parse_args()
 
-    run(start_dt=args.start, end_dt=args.end, dry_run=args.dry_run, limit=args.limit)
+    run(start_dt=args.start, end_dt=args.end, dry_run=args.dry_run,
+        limit=args.limit, board=args.board)
 
 
 if __name__ == '__main__':
