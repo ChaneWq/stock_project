@@ -54,7 +54,7 @@ def _load_config() -> dict:
 
     default = {
         'table_name': 'stock_features4',
-        'stock_list_table': 'sc',
+        'stock_list_file': 'sc.txt',
         'date_window_days': 4,
         'bars_offset': 1800,
         'max_workers': 6,
@@ -64,6 +64,10 @@ def _load_config() -> dict:
             if parser.has_option('import', key):
                 value = parser.get('import', key)
                 default[key] = int(value) if isinstance(default[key], int) else value
+
+    # 股票清单文件：相对路径按本目录解析
+    if not os.path.isabs(default['stock_list_file']):
+        default['stock_list_file'] = os.path.join(_CONFIG_DIR, default['stock_list_file'])
 
     return {'db': db, 'import': default}
 

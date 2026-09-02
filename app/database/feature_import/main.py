@@ -124,9 +124,10 @@ def filter_board_codes(codes: list, board: str = 'all') -> list:
     return [c for c in codes if str(c).startswith(_MAIN_BOARD_PREFIXES)]
 
 
-def get_all_codes(writer: DorisWriter, stock_list_table: str) -> list:
-    """从 DorisDB 股票清单表获取全部股票代码"""
-    return writer.query_codes(f'SELECT code FROM {stock_list_table};')
+def get_all_codes(stock_list_file: str) -> list:
+    """从本地 CSV 股票清单文件获取全部股票代码（dtype=str 保留前导零）"""
+    df = pd.read_csv(stock_list_file, dtype={'code': str})
+    return df['code'].tolist()
 
 
 # ---------------- 主流程 ---------------- #
@@ -150,7 +151,7 @@ def run(start_dt: str = None, end_dt: str = None, dry_run: bool = False,
         start_dt = (datetime.now() - timedelta(days=conf['date_window_days'])).strftime('%Y-%m-%d')
 
     writer = DorisWriter(CONFIG['db'], conf['table_name'])
-    codes = get_all_codes(writer, conf['stock_list_table'])
+    codes = get_all_codes(conf['stock_list_file'])
     total = len(codes)
     codes = filter_board_codes(codes, board)
     if board == 'main' and len(codes) < total:

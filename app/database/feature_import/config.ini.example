@@ -12,8 +12,8 @@ database = your_db
 [import]
 ; 特征表（表需已存在，本工具只插入不建表）
 table_name = stock_features4
-; 股票清单表
-stock_list_table = sc
+; 股票清单文件（CSV，含code列；相对路径按本目录解析）
+stock_list_file = sc.txt
 ; 默认导入窗口（天）
 date_window_days = 4
 ; 日线拉取条数（需覆盖最长指标周期 MA250）
