@@ -12,6 +12,7 @@ intraday_overnight 日内超短回测
 - fixed_time    次日指定时刻卖（--time 10:00）
 - conditional   止盈/止损/兜底时刻（--take-profit 3 --stop-loss -2）
 - vr            量比达阈值卖（--vr 2.5）
+- custom1       止盈+如果没触发止盈，收盘价卖
 
 用法：
 python -m app.backtest.intraday_overnight.main --code 000059 --flag-date 2026-09-01 --sell open,close,vr

@@ -72,7 +72,7 @@ def run_backtest(code: str, flag_date: str, sell_names: list,
     sell_date = dates[idx + 1]
     buy_price = float(buy_row['close'])
 
-    # ---- 按需拉取卖出日分时（去重：多个分时策略只拉一次）----
+    # ---- 拉取卖出日分时（策略用 + 浮盈浮亏统一按 9:30~收盘 分时口径）----
     need_plain = any(STRATEGY_REGISTRY[n].needs_minutes for n in sell_names)
     need_vr = any(STRATEGY_REGISTRY[n].needs_vr for n in sell_names)
     date_compact = sell_date.replace('-', '')
@@ -87,6 +87,16 @@ def run_backtest(code: str, flag_date: str, sell_names: list,
         minute_df = source.fetch_minutes(code, date_compact)
         if minute_df is None or minute_df.empty:
             raise BacktestError(f"未获取到 {code} 在 {sell_date} 的分时数据")
+    else:
+        # 纯日线策略也拉一次分时：最大浮盈/浮亏统一用 9:30~收盘 口径（不含竞价）
+        minute_df = source.fetch_minutes(code, date_compact)
+
+    # 卖出日盘中最高/最低（9:30~收盘 分时口径；分时缺失时为 None）
+    if minute_df is not None and not minute_df.empty:
+        session_high = float(minute_df['high'].max())
+        session_low = float(minute_df['low'].min())
+    else:
+        session_high = session_low = None
 
     # ---- 逐策略执行 ----
     results = []
@@ -104,9 +114,11 @@ def run_backtest(code: str, flag_date: str, sell_names: list,
         r = strategy.determine_sell(ctx)
 
         pct = (r.sell_price / buy_price - 1) * 100
-        # 盘中最大浮盈/浮亏（相对买入价，基于卖出日 high/low）
-        max_gain = (float(sell_row['high']) / buy_price - 1) * 100
-        max_loss = (float(sell_row['low']) / buy_price - 1) * 100
+        # 盘中最大浮盈/浮亏（相对买入价，9:30~收盘 分时口径，不含竞价）
+        max_gain = ((session_high / buy_price - 1) * 100
+                    if session_high is not None else None)
+        max_loss = ((session_low / buy_price - 1) * 100
+                    if session_low is not None else None)
 
         results.append({
             'code': code,
@@ -117,8 +129,8 @@ def run_backtest(code: str, flag_date: str, sell_names: list,
             'sell_price': round(r.sell_price, 3),
             'sell_time': r.sell_time,
             'pct': round(pct, 2),
-            'max_gain_pct': round(max_gain, 2),
-            'max_loss_pct': round(max_loss, 2),
+            'max_gain_pct': round(max_gain, 2) if max_gain is not None else None,
+            'max_loss_pct': round(max_loss, 2) if max_loss is not None else None,
             'reason': r.reason,
         })
 
@@ -145,8 +157,10 @@ def format_results(results: list) -> str:
         "-" * 100,
     ]
     for r in results:
+        gain_s = f"{r['max_gain_pct']:+.2f}" if r['max_gain_pct'] is not None else '-'
+        loss_s = f"{r['max_loss_pct']:+.2f}" if r['max_loss_pct'] is not None else '-'
         lines.append(
             f"{r['strategy']:<12}{r['sell_price']:>10}{r['sell_time']:>8}"
-            f"{r['pct']:>+8}{r['max_gain_pct']:>+10}{r['max_loss_pct']:>+10}  {r['reason']}"
+            f"{r['pct']:>+8}{gain_s:>10}{loss_s:>10}  {r['reason']}"
         )
     return '\n'.join(lines)

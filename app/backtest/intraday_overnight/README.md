@@ -66,10 +66,21 @@ python -m app.backtest.intraday_overnight.main --code 000059 --flag-date 2026-09
 
 python -m app.backtest.intraday_overnight.main --code 000059 --flag-date 2026-09-01 --sell vr --vr 2.5 --fallback 14:57
 
+6. custom1 — 止盈卖，未触发则收盘价卖
+--------------------------------
+逻辑：盘中逐分钟扫描，涨幅达到止盈阈值即卖；全天未触发 → 以收盘价卖出
+     （与 conditional 的区别：兜底是收盘价而非时刻）
+数据：分时
+参数：
+  --take-profit  止盈涨幅%，如 3；不传=不启用（等价于 close 收盘卖）
+
+python -m app.backtest.intraday_overnight.main --code 000059 --flag-date 2026-09-01 --sell custom1 --take-profit 3
+
 三、多策略对比（可直接复制）
 ================================
 一次买入，多策略各自卖出，输出对比表：
   卖出价 / 卖出时刻 / 收益% / 盘中最大浮盈% / 最大浮亏% / 触发原因
+  （浮盈浮亏按卖出日 9:30~收盘 的分时价格计算，不含集合竞价）
 
 python -m app.backtest.intraday_overnight.main --code 000059 --flag-date 2026-09-01 --sell open,close,fixed_time,conditional,vr --take-profit 3 --stop-loss -2 --time 10:00 --vr 2.5
 
