@@ -1,0 +1,21 @@
+intraday_overnight 日内超短回测
+
+主题：固定 flag_date 收盘价买入，下一交易日按不同条件卖出
+
+核心设计：
+- 买入固定（日期+价格），卖出条件可插拔
+- 每个卖出条件 = strategies/ 下一个 SellStrategy 子类
+
+内置卖出策略：
+- open          次日开盘卖
+- close         次日收盘卖
+- fixed_time    次日指定时刻卖（--time 10:00）
+- conditional   止盈/止损/兜底时刻（--take-profit 3 --stop-loss -2）
+- vr            量比达阈值卖（--vr 2.5）
+
+用法：
+python -m app.backtest.intraday_overnight.main --code 000059 --flag-date 2026-09-01 --sell open,close,vr
+
+输出：多策略收益对比表（卖出价/时刻/收益%/盘中最大浮盈浮亏/触发原因）
+
+扩展新卖法：strategies/ 新建文件继承 SellStrategy，注册进 STRATEGY_REGISTRY
