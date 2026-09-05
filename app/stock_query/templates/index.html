@@ -37,6 +37,7 @@
         <label>代码 <input type="text" id="code" placeholder="如 000712" size="10"></label>
         <label><input type="radio" name="mode" value="range" checked> 日期区间</label>
         <label><input type="radio" name="mode" value="recent"> 最近N个交易日</label>
+        <label><input type="radio" name="mode" value="minutes"> 分时数据</label>
     </div>
     <div class="form-row" id="row_range">
         <label>开始 <input type="date" id="start"></label>
@@ -47,6 +48,10 @@
         <label>N <input type="number" id="recent" value="30" min="1" max="500"></label>
         <span class="mode-desc">按该股实际交易日取最近N天</span>
     </div>
+    <div class="form-row" id="row_minutes" style="display:none;">
+        <label>日期 <input type="date" id="mdate"></label>
+        <span class="mode-desc">查询该交易日全天分时（9:30~14:59，240条）</span>
+    </div>
     <div class="form-row" style="margin-top:14px;">
         <button onclick="doQuery()">查 询</button>
         <span class="hint" id="hint"></span>
@@ -55,14 +60,7 @@
 
 <div class="panel">
     <table>
-        <thead>
-            <tr>
-                <th>日期</th><th>涨幅%</th><th>成交量</th><th>量变化%</th>
-                <th>MA7</th><th>偏离度%</th>
-                <th>9:30量比</th><th>9:30涨幅%</th>
-                <th>9:31量比</th><th>9:31涨幅%</th>
-            </tr>
-        </thead>
+        <thead id="thead"></thead>
         <tbody id="tbody">
             <tr><td colspan="10" class="empty">输入代码后点击查询</td></tr>
         </tbody>
@@ -79,44 +77,81 @@ function colorTd(v, digits) {
     var cls = v > 0 ? 'up' : (v < 0 ? 'down' : '');
     return '<td class="' + cls + '">' + fmt(v, digits) + '</td>';
 }
+var HEAD_DAILY = '<tr>'
+    + '<th>日期</th><th>涨幅%</th><th>成交量</th><th>量变化%</th>'
+    + '<th>MA7</th><th>偏离度%</th>'
+    + '<th>9:30量比</th><th>9:30涨幅%</th>'
+    + '<th>9:31量比</th><th>9:31涨幅%</th>'
+    + '</tr>';
+var HEAD_MINUTES = '<tr>'
+    + '<th>时间</th><th>价格</th><th>涨幅%</th><th>分钟量</th><th>累计量</th><th>量比</th>'
+    + '</tr>';
+function renderDaily(data) {
+    document.getElementById('thead').innerHTML = HEAD_DAILY;
+    return data.map(function(d) {
+        return '<tr>'
+            + '<td>' + d.trade_date + '</td>'
+            + colorTd(d.today_rate, 2)
+            + '<td>' + (d.vol === null ? '-' : d.vol.toLocaleString()) + '</td>'
+            + colorTd(d.vol_chg_pct, 2)
+            + '<td>' + fmt(d.MA7, 3) + '</td>'
+            + colorTd(d.dev_pct, 2)
+            + '<td>' + fmt(d.vol_ratio_0930, 3) + '</td>'
+            + colorTd(d.rate_0930, 2)
+            + '<td>' + fmt(d.vol_ratio_0931, 3) + '</td>'
+            + colorTd(d.rate_0931, 2)
+            + '</tr>';
+    }).join('');
+}
+function renderMinutes(data) {
+    document.getElementById('thead').innerHTML = HEAD_MINUTES;
+    return data.map(function(d) {
+        return '<tr>'
+            + '<td>' + d.time + '</td>'
+            + '<td>' + fmt(d.price, 2) + '</td>'
+            + colorTd(d.rate_pct, 2)
+            + '<td>' + (d.volume === null ? '-' : d.volume.toLocaleString()) + '</td>'
+            + '<td>' + (d.cumulative_vol === null ? '-' : d.cumulative_vol.toLocaleString()) + '</td>'
+            + '<td>' + fmt(d.volume_ratio, 2) + '</td>'
+            + '</tr>';
+    }).join('');
+}
 function doQuery() {
     var code = document.getElementById('code').value.trim();
     var hint = document.getElementById('hint');
     if (!code) { hint.textContent = '请输入股票代码'; return; }
-    hint.textContent = '查询中...';
     var mode = document.querySelector('input[name=mode]:checked').value;
-    var url = '/api/query?code=' + encodeURIComponent(code);
-    if (mode === 'recent') {
-        url += '&recent=' + (document.getElementById('recent').value || 30);
+    if (mode === 'minutes' && !document.getElementById('mdate').value) {
+        hint.textContent = '请选择日期';
+        return;
+    }
+    hint.textContent = '查询中...';
+    var url;
+    if (mode === 'minutes') {
+        url = '/api/minutes?code=' + encodeURIComponent(code)
+            + '&date=' + document.getElementById('mdate').value;
     } else {
-        var s = document.getElementById('start').value;
-        var e = document.getElementById('end').value;
-        if (s) url += '&start=' + s;
-        if (e) url += '&end=' + e;
+        url = '/api/query?code=' + encodeURIComponent(code);
+        if (mode === 'recent') {
+            url += '&recent=' + (document.getElementById('recent').value || 30);
+        } else {
+            var s = document.getElementById('start').value;
+            var e = document.getElementById('end').value;
+            if (s) url += '&start=' + s;
+            if (e) url += '&end=' + e;
+        }
     }
     fetch(url).then(function(r) { return r.json(); }).then(function(resp) {
         if (resp.error) {
             hint.textContent = '';
+            document.getElementById('thead').innerHTML = '';
             document.getElementById('tbody').innerHTML =
                 '<tr><td colspan="10" class="error">' + resp.error + '</td></tr>';
             return;
         }
         hint.textContent = '共 ' + resp.count + ' 条';
-        var rows = resp.data.map(function(d) {
-            return '<tr>'
-                + '<td>' + d.trade_date + '</td>'
-                + colorTd(d.today_rate, 2)
-                + '<td>' + (d.vol === null ? '-' : d.vol.toLocaleString()) + '</td>'
-                + colorTd(d.vol_chg_pct, 2)
-                + '<td>' + fmt(d.MA7, 3) + '</td>'
-                + colorTd(d.dev_pct, 2)
-                + '<td>' + fmt(d.vol_ratio_0930, 3) + '</td>'
-                + colorTd(d.rate_0930, 2)
-                + '<td>' + fmt(d.vol_ratio_0931, 3) + '</td>'
-                + colorTd(d.rate_0931, 2)
-                + '</tr>';
-        }).join('');
-        document.getElementById('tbody').innerHTML = rows;
+        document.getElementById('tbody').innerHTML =
+            mode === 'minutes' ? renderMinutes(resp.data) : renderDaily(resp.data);
     }).catch(function(err) {
         hint.textContent = '';
         document.getElementById('tbody').innerHTML =
@@ -125,9 +160,9 @@ function doQuery() {
 }
 document.querySelectorAll('input[name=mode]').forEach(function(r) {
     r.addEventListener('change', function() {
-        var isRange = r.value === 'range';
-        document.getElementById('row_range').style.display = isRange ? '' : 'none';
-        document.getElementById('row_recent').style.display = isRange ? 'none' : '';
+        document.getElementById('row_range').style.display = r.value === 'range' ? '' : 'none';
+        document.getElementById('row_recent').style.display = r.value === 'recent' ? '' : 'none';
+        document.getElementById('row_minutes').style.display = r.value === 'minutes' ? '' : 'none';
     });
 });
 document.getElementById('code').addEventListener('keydown', function(e) {

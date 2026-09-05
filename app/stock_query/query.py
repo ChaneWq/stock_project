@@ -162,3 +162,57 @@ def query_stock(code: str, start_date: str = None, end_date: str = None,
         })
 
     return records[::-1]  # 倒序返回（最新在前）
+
+
+def query_minutes(code: str, query_date: str) -> list:
+    """
+    查询某交易日的全天分时数据（240行，9:30~14:59 正序）
+
+    Args:
+        code (str): 股票代码，如 '000712'
+        query_date (str): 日期 YYYY-MM-DD
+
+    Returns:
+        list[dict]: 分时记录（时间/价格/涨幅/分钟量/累计量/量比）
+    """
+    code = str(code).strip()
+    if not code or len(code) != 6 or not code.isdigit():
+        raise ValueError(f"股票代码格式错误：{code}（应为6位数字）")
+
+    query_date = (query_date or '').strip()
+    try:
+        ts = pd.Timestamp(query_date)
+        if pd.isna(ts):
+            raise ValueError(query_date)
+    except Exception:
+        raise ValueError(f"日期格式错误：{query_date}（应为 YYYY-MM-DD）")
+    date_str = ts.strftime('%Y%m%d')
+
+    bars, vr, _ = _get_resources()
+
+    # 昨收：取查询日之前最近一个交易日的收盘价（日线倒序，首行即最近）
+    prev_close = None
+    daily_df = bars.get_daily(code, 30)
+    if daily_df is not None and not daily_df.empty:
+        td_list = daily_df['trade_date'].astype(str).str[:10].str.replace('-', '')
+        before_idx = td_list[td_list < date_str].index
+        if len(before_idx) > 0:
+            prev_close = float(daily_df.loc[before_idx[0], 'close'])
+
+    # 全天分时（含量比），n=5 为量比基准天数
+    vr_df = vr.get_data(code, date_str, n=5)
+    if vr_df is None or vr_df.empty:
+        return []
+
+    records = []
+    for _, row in vr_df.iterrows():
+        price = _round(row['close'], 2)
+        records.append({
+            'time': f"{int(row['hour']):02d}:{int(row['minute']):02d}",
+            'price': price,
+            'rate_pct': _safe_pct(price, prev_close),
+            'volume': int(row['volume']),
+            'cumulative_vol': int(row['cumulative_vol']),
+            'volume_ratio': _round(row['volume_ratio'], 2),
+        })
+    return records
