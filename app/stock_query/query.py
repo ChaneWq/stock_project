@@ -190,9 +190,11 @@ def query_minutes(code: str, query_date: str) -> list:
 
     bars, vr, _ = _get_resources()
 
-    # 昨收：取查询日之前最近一个交易日的收盘价（日线倒序，首行即最近）
+    # 昨收：按查询日期动态拉日线（距今越远拉越多，跨度+40根余量），
+    # 取查询日之前最近一个交易日的收盘价（日线倒序，首行即最近）
     prev_close = None
-    daily_df = bars.get_daily(code, 30)
+    span = max((datetime.now() - ts).days, 0)
+    daily_df = bars.get_daily(code, span + 40)
     if daily_df is not None and not daily_df.empty:
         td_list = daily_df['trade_date'].astype(str).str[:10].str.replace('-', '')
         before_idx = td_list[td_list < date_str].index
