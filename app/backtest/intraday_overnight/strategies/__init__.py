@@ -14,6 +14,7 @@ from .sell_fixed_time import SellAtFixedTime
 from .sell_conditional import SellConditional
 from .sell_vr import SellOnVR
 from .sell_custom1 import SellCustom1
+from .sell_custom2 import SellCustom2
 
 # 注册表：name → 策略实例（无状态，模块级复用）
 STRATEGY_REGISTRY = {
@@ -23,4 +24,5 @@ STRATEGY_REGISTRY = {
     'conditional': SellConditional(),
     'vr': SellOnVR(),
     'custom1': SellCustom1(),
+    'custom2': SellCustom2(),
 }

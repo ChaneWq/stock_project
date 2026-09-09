@@ -76,6 +76,17 @@ python -m app.backtest.intraday_overnight.main --code 000059 --flag-date 2026-09
 
 python -m app.backtest.intraday_overnight.main --code 000059 --flag-date 2026-09-01 --sell custom1 --take-profit 3
 
+6. custom2 — 止盈 + 未触发则指定时刻卖
+--------------------------------
+逻辑：盘中逐分钟扫描止盈，先触发先卖；全天未触发 → 指定时刻（--time）卖出
+     （与 custom1 的区别：custom1 兜底收盘价，custom2 兜底指定时刻）
+数据：分时
+参数：
+  --take-profit  止盈涨幅%，如 3；不传=不启用（等价 fixed_time）
+  --time         未触发止盈时的卖出时刻，默认 10:00
+
+python -m app.backtest.intraday_overnight.main --code 000059 --flag-date 2026-09-01 --sell custom2 --take-profit 3 --time 09:37
+
 三、多策略对比（可直接复制）
 ================================
 一次买入，多策略各自卖出，输出对比表：
@@ -84,7 +95,33 @@ python -m app.backtest.intraday_overnight.main --code 000059 --flag-date 2026-09
 
 python -m app.backtest.intraday_overnight.main --code 000059 --flag-date 2026-09-01 --sell open,close,fixed_time,conditional,vr --take-profit 3 --stop-loss -2 --time 10:00 --vr 2.5
 
-四、常见报错
+五、批量回测（CSV 输入，可直接复制）
+================================
+CSV 格式（两列，行序任意，同 code 多个日期自动共享日线）：
+
+trade_date,code
+2026-09-01,000059
+20260901,000001
+
+运行（--code 与 --csv 二选一）：
+
+python -m app.backtest.intraday_overnight.main --csv batch.csv --sell open,close,custom1 --take-profit 3 --out result.csv
+
+并行执行（多线程，--workers 线程数）：
+
+python -m app.backtest.intraday_overnight.main --csv batch.csv --sell open,close --workers 4
+
+输出：
+- 明细 CSV（--out 指定，默认 batch_result.csv）：
+  code/buy_date/sell_date/buy_price/strategy/sell_price/sell_time/pct/max_gain/max_loss/reason/error
+- 控制台按策略汇总：样本数 / 胜率 / 平均收益% / 最佳 / 最差
+
+说明：
+- code 强制按文本读取（前导零安全）；trade_date 兼容 YYYY-MM-DD 与 YYYYMMDD
+- 单行失败（非交易日/最新交易日等）不中断批量，记入该行 error 列
+- 同一 code 的日线只拉取一次（批量主要提速点）
+
+六、常见报错
 ================================
 - "不是交易日"            → flag_date 为非交易日，换交易日
 - "是最新交易日"           → 下一交易日尚未到来，无法回测
