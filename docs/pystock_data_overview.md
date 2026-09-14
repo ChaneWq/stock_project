@@ -7,13 +7,13 @@
 
 ## 1. 模块概述
 
-`pystock_data` 是 PyStock 项目的**数据层包**，负责从通达信（mootdx）数据源获取行情数据，并对外提供标准化的 K 线、分时数据以及技术指标计算能力。
+`pystock_data` 是 PyStock 项目的**数据层包**，负责通过自研 `_tdxapi` 协议库从通达信行情服务器获取行情数据，并对外提供标准化的 K 线、分时数据以及技术指标计算能力。
 
 ### 设计分层
 
 ```
 pystock_data/
-├── source/      数据源层：封装 mootdx，统一管理客户端
+├── source/      数据源层：封装 _tdxapi，统一管理客户端
 ├── basic/       基础数据层：标准化 K 线 / 分时 / 带量比分时
 └── indicators/  指标数据层：在基础 DataFrame 上计算技术指标
 ```
@@ -80,18 +80,19 @@ pystock_data/
 
 | 方法 | 说明 |
 |------|------|
-| `get_client(market='std')` | 获取或创建客户端（缓存复用） |
-| `has_client(market)` | 是否已缓存 |
+| `get_client()` | 获取或创建共享客户端（缓存复用） |
+| `get_thread_client()` | 获取线程独立客户端 |
+| `has_client(market)` | 是否已缓存（兼容旧接口） |
 | `get_client_count()` | 缓存数量 |
-| `get_cached_markets()` | 已缓存市场列表 |
+| `get_cached_markets()` | 已缓存市场列表（兼容旧接口） |
 | `clear_cache()` | 清空缓存（主要用于测试） |
 
 ### 3.2 `tdx_source.py` — TdxSource
 
-**职责**：封装 mootdx 调用，对外提供 K 线、分时、历史成交量数据获取接口。
+**职责**：封装 _tdxapi 调用，对外提供 K 线、分时、历史成交量数据获取接口。
 
 **设计要点**：
-- 构造时仅保存 `self.market`，**不持有 client**，运行时通过 `ClientManager.get_client(self.market)` 获取（懒加载 + 缓存复用）。
+- 构造时仅保存配置项，**不持有 client**，运行时通过 `ClientManager.get_client()` 获取（懒加载 + 缓存复用）。
 - 所有 `fetch_*` 方法采用 `try/except` 包裹，失败时打印日志并返回空 `DataFrame` / `None`，不抛出异常。
 - K 线结果经过 [`standardize_fields`](../pystock_data/source/utils.py) 标准化；分时结果经过 [`add_minute_fields`](../pystock_data/source/utils.py) 处理。
 
@@ -286,8 +287,8 @@ kdj_j = 3 * kdj_k - 2 * kdj_d
 应用调用
   └─ BasicBars.get_daily('000400', 400)
        └─ TdxSource.fetch_bars(code, 9, 400)
-            └─ ClientManager.get_client('std')   [缓存复用]
-            └─ mootdx client.bars(...)
+            └─ ClientManager.get_client()        [缓存复用]
+            └─ _tdxapi client.get_bars(...)
             └─ standardize_fields(df, code)
        └─ 按 datetime 倒序
   → 标准基础 DataFrame
@@ -313,7 +314,7 @@ BasicMinutesWithVR().get_data('000400', '20260624', n=5)
 
 ## 7. 关键设计点
 
-1. **ClientManager 缓存复用**：所有 `TdxSource` 共享同一 `market` 的 client，避免重复初始化 `Quotes.factory`，节省网络与资源开销。
+1. **ClientManager 缓存复用**：所有 `TdxSource` 共享同一个 `TdxClient`，避免重复连接（测速选服务器 + 握手），节省网络与资源开销。
 2. **字段标准化**：`standardize_fields` 统一 `vol → volume`、补 `trade_date` / `stock_code`，保证基础层输出列名一致，便于指标层消费。
 3. **DataFrame 增强机制**：指标层只新增列、不删除原有列，多个指标可链式叠加。
 4. **输入校验**：指标基类 `validate_input` 检查 `required_fields`，校验失败返回 `df.copy()`，避免中断调用链。
@@ -346,7 +347,7 @@ peaks = vr.find_volume_ratio_peaks(vr_df, threshold=3.0)
 
 # 直接使用数据源层（高级）
 from pystock_data.source import ClientManager, TdxSource
-ClientManager.get_client('std')           # 预热客户端
+ClientManager.get_client()                # 预热客户端
 raw = TdxSource().fetch_bars('000400', 9, 100)
 ```
 
@@ -358,7 +359,7 @@ raw = TdxSource().fetch_bars('000400', 9, 100)
   - `TdxSource.fetch_realtime(codes)`
   - `BasicMinutes.get_data_by_range(code, start_date, end_date)`
 - **market 参数范围**：仅 `BasicMinutesWithVR` 与 `TdxSource` 接收 `market`；`BasicBars` / `BasicMinutes` 使用默认 `'std'`。
-- **`fetch_prev_n_day_vol` 的 `vol_list`**：取自 mootdx 原始 `vol` 字段，未经标准化为 `volume`，单位与 `BasicBars` 的 `volume` 一致。
+- **`fetch_prev_n_day_vol` 的 `vol_list`**：取自日线 `volume` 字段，单位与 `BasicBars` 的 `volume` 一致。
 - **指标 EMA 实现**：MACD 用 `ewm(span=..., adjust=False)`，KDJ 用 `ewm(com=m-1, adjust=False)`，两者平滑参数语义不同。
 - **数据排序约定**：K 线倒序（最新在前），分时正序（从早到晚），下游使用时注意方向。
 

@@ -44,7 +44,7 @@
                         ↓ 连接外部数据源
 ┌──────────────────────────────────────────────────┐
 │              外部数据源（External Data Sources）   │
-│  - 通达信数据源（mootdx）                          │
+│  - 通达信行情服务器（自研 _tdxapi 协议）           │
 │  - Web API数据源（扩展）                           │
 └──────────────────────────────────────────────────┘
 ```
@@ -77,21 +77,22 @@ bars3 = BasicBars()      # 初始化client3（浪费）
 ```python
 # ClientManager：全局客户端管理器
 class ClientManager:
-    """管理通达信客户端实例的创建和缓存"""
-    _clients = {}  # 缓存字典：{market: client_instance}
+    """管理_tdxapi客户端实例的创建和缓存"""
+    _client = None  # 共享客户端实例（懒创建）
     
     @classmethod
-    def get_client(cls, market='std'):
+    def get_client(cls):
         """获取或创建客户端（缓存复用）"""
-        if market not in cls._clients:
-            cls._clients[market] = Quotes.factory(market=market)
-        return cls._clients[market]
+        if cls._client is None:
+            cls._client = TdxClient(heartbeat=True)
+            cls._client.connect()
+        return cls._client
 ```
 
 **优化效果**：
 - ✅ **避免重复初始化**：多个TdxSource共享同一个client
 - ✅ **懒加载机制**：首次使用时才初始化，节省资源
-- ✅ **多市场支持**：不同market有不同client实例
+- ✅ **线程支持**：共享client（内置RLock）或线程独立client（get_thread_client）
 - ✅ **全局统一管理**：易于监控、扩展和维护
 
 #### 核心类设计
@@ -118,19 +119,19 @@ class TdxSource(SourceBase):
     
     def fetch_bars(self, code, freq, offset):
         # 通过ClientManager获取client（缓存复用）
-        client = ClientManager.get_client(self.market)
+        client = ClientManager.get_client()
         
-        # 调用mootdx获取原始数据
-        df = client.bars(symbol=code, frequency=freq, offset=offset)
-        return df
+        # 调用_tdxapi获取原始数据
+        bars = client.get_bars(code, market, period, offset, 0)
+        return bars
     
     def fetch_minutes(self, code, date):
         # 通过ClientManager获取client
-        client = ClientManager.get_client(self.market)
+        client = ClientManager.get_client()
         
         # 获取分时数据
-        df = client.minutes(symbol=code, date=date)
-        return df
+        mins = client.get_history_minute_time(code, market, int(date))
+        return mins
 ```
 
 **使用对比**：
@@ -325,8 +326,8 @@ class MACDIndicator(IndicatorBase):
 ```
 1. 应用调用 BasicBars.get_daily('000400', 100)
 2. BasicBars 调用 TdxSource.fetch_bars('000400', 9, 100)
-3. TdxSource 调用 mootdx.client.bars()
-4. mootdx 返回原始DataFrame
+3. TdxSource 调用 _tdxapi client.get_bars()
+4. _tdxapi 返回K线数据（Bar列表）
 5. TdxSource 返回原始DataFrame
 6. BasicBars 标准化字段，返回标准DataFrame
 7. 应用获得标准基础DataFrame

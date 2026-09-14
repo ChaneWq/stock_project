@@ -269,7 +269,7 @@ from abc import ABC, abstractmethod
 from typing import DataFrame, Dict, List
 
 # 2. 第三方库导入
-from mootdx.quotes import Quotes
+import requests
 import numpy as np
 
 # 3. 本地模块导入（相对导入）
@@ -695,7 +695,6 @@ class BasicRealtime:
 ### 11.2 参考资料
 - Python PEP8规范：https://www.python.org/dev/peps/pep-0008/
 - pandas官方文档：https://pandas.pydata.org/
-- mootdx库文档：https://github.com/mootdx/mootdx
 
 ---
 

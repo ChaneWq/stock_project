@@ -7,6 +7,7 @@ PyStock数据层是一个专注于股票数据获取和技术指标计算的Pyth
 ## 核心特点
 
 - **分层架构**：数据源层 + 基础数据层 + 指标数据层
+- **自研协议**：内置 `_tdxapi` 通达信协议库，直接对接行情服务器
 - **统一输出**：所有数据返回标准DataFrame
 - **易于扩展**：模块化设计，新增功能简单
 
@@ -15,7 +16,7 @@ PyStock数据层是一个专注于股票数据获取和技术指标计算的Pyth
 ### 安装依赖
 
 ```bash
-pip install pandas mootdx numpy
+pip install pandas numpy
 ```
 
 ### 基础使用
@@ -77,12 +78,17 @@ pytest pystock_data/tests/ -v
 ### 基础数据层
 - **BasicBars**：日线、周线、月线数据
 - **BasicMinutes**：分时数据（分钟级）
+- **BasicMinutesWithVR**：带量比的分时数据
 
 ### 指标数据层
 - **KDJIndicator**：KDJ随机指标
 - **MACDIndicator**：MACD异同移动平均线
 - **MAIndicator**：均线指标（MA5、MA10、MA20等）
-- **VolumeRatioIndicator**：量比指标
+- **VWAPIndicator**：成交量加权均价指标
+- **VolumeMAIndicator**：量均线指标
+- **BBIIndicator**：多空指标
+- **ZXTIndicator / ZXBullBearLineIndicator / ZXShortTermTrendIndicator**：重心类指标
+- **DZTIndicator / DZSIndicator**：针形形态指标
 
 ## 数据字段标准
 
@@ -108,22 +114,35 @@ amount       # 成交额
 
 ```
 pystock_data/
-├── source/           # 数据源层
-│   ├── tdx_source.py # 通达信数据源
-│   └── utils.py      # 工具函数
+├── source/               # 数据源层
+│   ├── _tdxapi/          # 自研通达信协议库
+│   │   ├── protocol/     # 协议编解码（请求构造/响应解析）
+│   │   ├── network/      # 网络客户端（连接/重连/心跳）
+│   │   ├── parser/       # 行情数据解析
+│   │   ├── models/       # 数据模型（Bar/Quote/Tick）
+│   │   └── utils/        # 工具函数
+│   ├── tdx_source.py     # 通达信数据源（fetch_bars/fetch_minutes）
+│   ├── client_manager.py # 客户端管理器（共享/线程独立）
+│   └── utils.py          # 工具函数（字段标准化等）
 │
-├── basic/            # 基础数据层
-│   ├── bars.py       # K线数据
-│   └── minutes.py    # 分时数据
+├── basic/                # 基础数据层
+│   ├── bars.py           # K线数据（日/周/月线）
+│   ├── minutes.py        # 分时数据
+│   └── minutes_with_vr.py # 带量比的分时数据
 │
-├── indicators/       # 指标数据层
-│   ├── base.py       # 指标基类
-│   ├── kdj.py        # KDJ指标
-│   ├── macd.py       # MACD指标
-│   ├── ma.py         # 均线指标
-│   └── volume_ratio.py # 量比指标
+├── indicators/           # 指标数据层
+│   ├── base.py           # 指标基类
+│   ├── kdj.py            # KDJ指标
+│   ├── macd.py           # MACD指标
+│   ├── ma.py             # 均线指标
+│   ├── vwap.py           # VWAP指标
+│   ├── vma.py            # 量均线指标
+│   ├── bbi.py            # BBI指标
+│   ├── zx.py / zxt.py    # 重心类指标
+│   ├── needle.py         # 针形形态指标
+│   └── tdx/              # 通达信函数复刻
 │
-└── tests/            # 测试模块
+└── tests/                # 测试模块
 ```
 
 ## 文档

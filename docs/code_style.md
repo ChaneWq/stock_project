@@ -112,7 +112,7 @@ from typing import DataFrame, Dict, List, Optional
 # 第三方库
 import numpy as np
 import pandas as pd
-from mootdx.quotes import Quotes
+import requests
 
 # 本地模块
 from .base import IndicatorBase
@@ -122,7 +122,7 @@ from ..source.utils import standardize_fields
 # ❌ 错误：导入顺序混乱
 import pandas as pd
 import os
-from mootdx.quotes import Quotes
+import requests
 import sys
 from .base import IndicatorBase
 from abc import ABC
