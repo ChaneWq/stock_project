@@ -4,15 +4,62 @@
 功能：
 - 标准化数据字段命名
 - 数据格式转换
+- 股票代码市场推断
 - 日期处理工具
 
 作者：PyStock项目组
-日期：2026-06-26
-版本：1.0.0
+日期：2026-09-13
+版本：2.0.0
 """
+
+import re
 
 import pandas as pd
 from datetime import datetime
+
+
+def normalize_code_market(code: str, market: str = None) -> tuple:
+    """
+    将各种格式的股票代码统一为 (六位代码, 市场字符串) 格式
+
+    Args:
+        code (str): 股票代码，支持 sz000001 / sh600519 / 000001.SZ / 600519.SH / 000001
+        market (str, optional): 显式指定市场（SH/SZ/BJ），覆盖自动推断
+
+    Returns:
+        tuple: (六位代码, 市场字符串)
+
+    Example:
+        >>> normalize_code_market('600519')
+        >>> # ('600519', 'SH')
+        >>> normalize_code_market('000400')
+        >>> # ('000400', 'SZ')
+    """
+    code = code.strip()
+    prefix = code[:2].lower()
+
+    if prefix in ("sz", "sh", "bj"):
+        c = code[2:]
+        m = prefix.upper()
+    elif "." in code:
+        parts = code.rsplit(".", 1)
+        c = parts[0]
+        m = parts[1].upper()[:2]
+        if m not in ("SZ", "SH", "BJ"):
+            m = "SH"
+    else:
+        c = re.sub(r"\D", "", code)
+        if c.startswith("6"):
+            m = "SH"
+        elif c.startswith(("4", "8", "9")):
+            m = "BJ"
+        else:
+            m = "SZ"
+
+    if market:
+        m = market.upper()
+
+    return c, m
 
 
 def standardize_fields(df: pd.DataFrame, stock_code: str = None) -> pd.DataFrame:

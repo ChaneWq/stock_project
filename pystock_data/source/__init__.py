@@ -6,6 +6,6 @@
 
 from .tdx_source import TdxSource
 from .client_manager import ClientManager
-from .utils import standardize_fields
+from .utils import standardize_fields, normalize_code_market
 
-__all__ = ['TdxSource', 'ClientManager', 'standardize_fields']
+__all__ = ['TdxSource', 'ClientManager', 'standardize_fields', 'normalize_code_market']
