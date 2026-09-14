@@ -68,13 +68,13 @@ pystock_data/
 
 ### 3.1 `client_manager.py` — ClientManager
 
-**职责**：统一管理通达信 `Quotes` 客户端实例，避免重复初始化。
+**职责**：统一管理 `_tdxapi.TdxClient` 客户端实例，避免重复初始化。
 
 **设计要点**：
 - 全部为 `@classmethod`，**无需实例化**即可调用。
-- 内部以类变量 `_clients = {}` 作为缓存字典，键为 `market`，值为 `Quotes` 实例。
-- **懒加载**：首次 `get_client(market)` 时才通过 `Quotes.factory(market=market)` 创建并缓存；后续直接返回缓存实例。
-- 同一个 `market` 的多个 `TdxSource` 实例共享同一个 client。
+- 共享实例：类变量 `_client` 懒创建（双重检查锁）；首次 `get_client()` 时才 `connect()`（自动测速选服务器），后续直接返回缓存实例。
+- 线程独立：`get_thread_client()` 基于 `threading.local`，每线程一份 client。
+- 连接管理（心跳保活、自动重连）由 `TdxClient` 自身内置，无需在此重复实现。
 
 **主要方法**：
 
