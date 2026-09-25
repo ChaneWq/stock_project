@@ -14,6 +14,7 @@
 
 import logging
 import threading
+import time
 
 import pandas as pd
 from .client_manager import ClientManager
@@ -88,20 +89,18 @@ class TdxSource:
             return ClientManager.get_thread_client()
         return ClientManager.get_client()
 
-    def fetch_bars(self, code: str, freq: int, offset: int) -> pd.DataFrame:
+    def fetch_bars(self, code: str, freq: int, offset: int, retries: int = 3) -> pd.DataFrame:
         """
-        获取K线数据
+        获取K线数据（内置重试：失败或返回空时自动重试）
 
         Args:
             code (str): 股票代码（6位字符串）
             freq (int): K线频率（9=日线, 5=周线, 6=月线）
             offset (int): 获取的数据数量
+            retries (int): 最大尝试次数（默认3，间隔0.5s递增）
 
         Returns:
-            DataFrame: K线数据（标准化后的DataFrame）
-
-        Raises:
-            Exception: 数据获取失败时抛出异常
+            DataFrame: K线数据（标准化后的DataFrame）；重试耗尽仍失败返回空DataFrame
 
         Example:
             >>> source = TdxSource()
@@ -112,56 +111,69 @@ class TdxSource:
         Note:
             - client通过ClientManager获取（缓存复用）
             - 首次调用时才初始化client（懒加载）
+            - 服务器偶发返回空响应/断连时自动重试，应对大批量拉取场景
         """
-        try:
-            client = self._get_client()
+        last_err = None
+        for attempt in range(1, retries + 1):
+            try:
+                df = self._fetch_bars_once(code, freq, offset)
+                if not df.empty:
+                    return df
+                last_err = '返回空数据'
+                logger.warning(f"[TdxSource] {code} 第{attempt}/{retries}次拉取K线为空")
+            except Exception as e:
+                last_err = str(e)
+                logger.warning(f"[TdxSource] {code} 第{attempt}/{retries}次拉取K线失败: {e}")
+            if attempt < retries:
+                time.sleep(0.5 * attempt)
+        logger.warning(f"[TdxSource] {code} K线拉取失败（已尝试{retries}次）: {last_err}")
+        return pd.DataFrame()
 
-            # 市场按股票代码自动推断（6→SH，0/3→SZ）
-            _, market = normalize_code_market(code)
-            period = _FREQ_TO_PERIOD.get(freq, "1d")
+    def _fetch_bars_once(self, code: str, freq: int, offset: int) -> pd.DataFrame:
+        """单次拉取K线数据（异常向上抛出，由fetch_bars统一重试）"""
+        client = self._get_client()
 
-            # 单次请求上限800条，超过需分页拉取
-            remaining = offset
-            all_bars = []
-            start = 0
-            while remaining > 0:
-                count = min(remaining, 800)
-                bars = client.get_bars(code, market, period, count, start)
-                if not bars:
-                    break
-                all_bars.extend(bars)
-                remaining -= len(bars)
-                start += len(bars)
-                if len(bars) < count:
-                    break
+        # 市场按股票代码自动推断（6→SH，0/3→SZ）
+        _, market = normalize_code_market(code)
+        period = _FREQ_TO_PERIOD.get(freq, "1d")
 
-            if not all_bars:
-                return pd.DataFrame()
+        # 单次请求上限800条，超过需分页拉取
+        remaining = offset
+        all_bars = []
+        start = 0
+        while remaining > 0:
+            count = min(remaining, 800)
+            bars = client.get_bars(code, market, period, count, start)
+            if not bars:
+                break
+            all_bars.extend(bars)
+            remaining -= len(bars)
+            start += len(bars)
+            if len(bars) < count:
+                break
 
-            # 转DataFrame（Bar列表 → 标准行）
-            records = [
-                {
-                    'datetime': b.datetime,
-                    'open': b.open,
-                    'close': b.close,
-                    'high': b.high,
-                    'low': b.low,
-                    'volume': b.volume,
-                    'amount': b.amount,
-                }
-                for b in all_bars
-            ]
-            df = pd.DataFrame(records)
-
-            # 标准化字段（补 stock_code / trade_date / 列顺序）
-            df = standardize_fields(df, code)
-
-            return df
-
-        except Exception as e:
-            # 数据获取失败，返回空DataFrame
-            logger.warning(f"[TdxSource] 获取K线数据失败: {e}")
+        if not all_bars:
             return pd.DataFrame()
+
+        # 转DataFrame（Bar列表 → 标准行）
+        records = [
+            {
+                'datetime': b.datetime,
+                'open': b.open,
+                'close': b.close,
+                'high': b.high,
+                'low': b.low,
+                'volume': b.volume,
+                'amount': b.amount,
+            }
+            for b in all_bars
+        ]
+        df = pd.DataFrame(records)
+
+        # 标准化字段（补 stock_code / trade_date / 列顺序）
+        df = standardize_fields(df, code)
+
+        return df
 
     def fetch_minutes(self, code: str, date: str) -> pd.DataFrame:
         """
