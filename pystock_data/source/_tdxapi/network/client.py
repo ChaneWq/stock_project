@@ -4,6 +4,14 @@
 基于 pytdx 源码校准协议
 """
 
+# 支持直接以脚本方式运行（python client.py）：按 PEP 366 补全包上下文，
+# 使相对导入生效；作为包模块导入时此段不触发
+if __name__ == '__main__' and (__package__ is None or __package__ == ''):
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[4]))
+    __package__ = 'pystock_data.source._tdxapi.network'
+
 import socket
 import time
 import struct
@@ -225,11 +233,11 @@ class TdxClient:
         self.connect(self._ip, self._port)
 
     def _find_best_server(self) -> tuple[str, int]:
-        """测速选择最优服务器"""
+        """测速选择最优服务器（含K线可用性校验）"""
         best = None
         best_time = float("inf")
         for ip, port in DEFAULT_SERVERS:
-            t = self._ping_server(ip, port)
+            t = self._probe_server(ip, port)
             if t is not None and t < best_time:
                 best_time = t
                 best = (ip, port)
@@ -237,17 +245,31 @@ class TdxClient:
             raise ConnectionError("所有服务器均不可用")
         return best
 
-    def _ping_server(self, ip: str, port: int) -> Optional[float]:
+    def _probe_server(self, ip: str, port: int) -> Optional[float]:
+        """探测服务器可用性：连接 + 握手 + 真实K线请求校验
+
+        仅测 TCP 延迟无法发现"连得上但K线服务异常"的服务器
+        （如返回截断响应导致解析失败），因此探测时发一次真实
+        get_bars 请求，成功才视为可用。
+
+        Returns:
+            float: 探测总耗时(ms)；服务器不可用返回 None
+        """
+        # 用临时 client 探测，不启心跳、不自动重连，探测完即关闭
+        probe = TdxClient(heartbeat=False, auto_reconnect=False)
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(5)
             start = time.time()
-            sock.connect((ip, port))
+            probe.connect(ip, port)
+            bars = probe.get_bars("000001", "SZ", "1d", 1, 0)
             elapsed = (time.time() - start) * 1000
-            sock.close()
-            return elapsed
-        except (socket.timeout, OSError):
+            return elapsed if bars else None
+        except Exception:
             return None
+        finally:
+            try:
+                probe.close()
+            except Exception:
+                pass
 
     # === 行情数据 ===
 
@@ -522,3 +544,26 @@ class TdxClient:
 
     def __exit__(self, *args):
         self.close()
+
+
+def _self_test():
+    """直接运行本文件时的连通性自测：自动选优连接，验证K线/分时/行情"""
+    client = TdxClient(heartbeat=True)
+    client.connect()
+    print(f"已连接服务器: {client._ip}:{client._port}")
+
+    bars = client.get_bars("000400", "SZ", "1d", 5, 0)
+    latest = bars[-1] if bars else None
+    print(f"日线: {len(bars)} 条, 最新: {latest.datetime} close={latest.close}" if latest else "日线: 无数据")
+
+    mins = client.get_history_minute_time("000400", "SZ")
+    print(f"分时: {len(mins)} 条")
+
+    q = client.get_quote("000400", "SZ")
+    print(f"实时行情: price={q.price}" if q else "实时行情: 无数据")
+
+    client.close()
+
+
+if __name__ == "__main__":
+    _self_test()
