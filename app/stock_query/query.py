@@ -62,7 +62,7 @@ def _round(v, digits=3):
 
 
 def query_stock(code: str, start_date: str = None, end_date: str = None,
-                recent_days: int = None) -> list:
+                recent_days: int = None, with_minutes: bool = True) -> list:
     """
     查询个股数据
 
@@ -71,9 +71,11 @@ def query_stock(code: str, start_date: str = None, end_date: str = None,
         start_date (str, optional): 开始日期 YYYY-MM-DD（区间模式）
         end_date (str, optional): 结束日期 YYYY-MM-DD（区间模式，默认今天）
         recent_days (int, optional): 最近N个交易日（优先于区间模式）
+        with_minutes (bool, optional): 是否附加分时指标（9:30/9:31 量比与涨幅），
+                                       False 时跳过分时请求，速度大幅提升
 
     Returns:
-        list[dict]: 按交易日倒序的记录
+        list[dict]: 按交易日倒序的记录（with_minutes=False 时不含分时字段）
     """
     code = str(code).strip()
     if not code or len(code) != 6 or not code.isdigit():
@@ -133,33 +135,38 @@ def query_stock(code: str, start_date: str = None, end_date: str = None,
         ma_row = ma_full[ma_full['trade_date'] == row['trade_date']]
         ma7 = float(ma_row.iloc[-1]['ma7']) if not ma_row.empty and not pd.isna(ma_row.iloc[-1]['ma7']) else None
 
-        # 分时：9:30/9:31 量比与价格（失败不中断，字段置 None）
+        # 分时：9:30/9:31 量比与价格（失败不中断，字段置 None）；纯日线模式跳过
         vr_930 = vr_931 = price_930 = price_931 = None
-        try:
-            vr_df = vr.get_data(code, trade_date, n=5)
-            if not vr_df.empty and len(vr_df) >= 2:
-                vr_930 = _round(vr_df.iloc[0]['volume_ratio'])
-                vr_931 = _round(vr_df.iloc[1]['volume_ratio'])
-                price_930 = _round(vr_df.iloc[0]['close'], 2)
-                price_931 = _round(vr_df.iloc[1]['close'], 2)
-        except Exception:
-            pass
+        if with_minutes:
+            try:
+                vr_df = vr.get_data(code, trade_date, n=5)
+                if not vr_df.empty and len(vr_df) >= 2:
+                    vr_930 = _round(vr_df.iloc[0]['volume_ratio'])
+                    vr_931 = _round(vr_df.iloc[1]['volume_ratio'])
+                    price_930 = _round(vr_df.iloc[0]['close'], 2)
+                    price_931 = _round(vr_df.iloc[1]['close'], 2)
+            except Exception:
+                pass
 
         close = _round(row['close'], 2)
         vol = int(row['volume'])
 
-        records.append({
+        record = {
             'trade_date': str(row['trade_date'])[:10],
             'today_rate': _safe_pct(row['close'], prev_close),
             'vol': vol,
             'vol_chg_pct': _safe_pct(vol, prev_vol),
             'MA7': _round(ma7, 3) if ma7 is not None else None,
             'dev_pct': _safe_pct(close, ma7),
-            'vol_ratio_0930': vr_930,
-            'rate_0930': _safe_pct(price_930, prev_close),
-            'vol_ratio_0931': vr_931,
-            'rate_0931': _safe_pct(price_931, prev_close),
-        })
+        }
+        if with_minutes:
+            record.update({
+                'vol_ratio_0930': vr_930,
+                'rate_0930': _safe_pct(price_930, prev_close),
+                'vol_ratio_0931': vr_931,
+                'rate_0931': _safe_pct(price_931, prev_close),
+            })
+        records.append(record)
 
     return records[::-1]  # 倒序返回（最新在前）
 

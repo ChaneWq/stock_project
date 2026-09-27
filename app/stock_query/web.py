@@ -46,14 +46,17 @@ def api_query():
     start = (request.args.get('start') or '').strip()
     end = (request.args.get('end') or '').strip()
     recent = (request.args.get('recent') or '').strip()
+    # with_minutes=0 时为纯日线模式（不含 9:30/9:31 分时指标，速度更快）
+    with_minutes = request.args.get('with_minutes', '1') not in ('0', 'false')
 
     try:
         if recent:
-            data = query_stock(code, recent_days=int(recent))
+            data = query_stock(code, recent_days=int(recent), with_minutes=with_minutes)
         elif start or end:
-            data = query_stock(code, start_date=start or None, end_date=end or None)
+            data = query_stock(code, start_date=start or None, end_date=end or None,
+                               with_minutes=with_minutes)
         else:
-            data = query_stock(code, recent_days=30)  # 默认最近30个交易日
+            data = query_stock(code, recent_days=30, with_minutes=with_minutes)  # 默认最近30个交易日
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except Exception as e:
@@ -61,7 +64,8 @@ def api_query():
 
     if not data:
         return jsonify({'error': f'股票 {code} 在该范围内无数据'}), 404
-    return jsonify({'code': code, 'count': len(data), 'data': data})
+    return jsonify({'code': code, 'count': len(data),
+                    'with_minutes': with_minutes, 'data': data})
 
 
 @app.route('/api/minutes')

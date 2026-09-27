@@ -38,6 +38,9 @@
         <label><input type="radio" name="mode" value="range" checked> 日期区间</label>
         <label><input type="radio" name="mode" value="recent"> 最近N个交易日</label>
         <label><input type="radio" name="mode" value="minutes"> 分时数据</label>
+        <label id="label_pure" title="跳过分时请求，仅返回日线指标，速度更快">
+            <input type="checkbox" id="pure_day"> 仅日线（不含9:30/9:31指标，快速）
+        </label>
     </div>
     <div class="form-row" id="row_range">
         <label>开始 <input type="date" id="start"></label>
@@ -83,24 +86,30 @@ var HEAD_DAILY = '<tr>'
     + '<th>9:30量比</th><th>9:30涨幅%</th>'
     + '<th>9:31量比</th><th>9:31涨幅%</th>'
     + '</tr>';
+var HEAD_DAILY_PURE = '<tr>'
+    + '<th>日期</th><th>涨幅%</th><th>成交量</th><th>量变化%</th>'
+    + '<th>MA7</th><th>偏离度%</th>'
+    + '</tr>';
 var HEAD_MINUTES = '<tr>'
     + '<th>时间</th><th>价格</th><th>涨幅%</th><th>分钟量</th><th>累计量</th><th>量比</th>'
     + '</tr>';
-function renderDaily(data) {
-    document.getElementById('thead').innerHTML = HEAD_DAILY;
+function renderDaily(data, pure) {
+    document.getElementById('thead').innerHTML = pure ? HEAD_DAILY_PURE : HEAD_DAILY;
     return data.map(function(d) {
-        return '<tr>'
+        var row = '<tr>'
             + '<td>' + d.trade_date + '</td>'
             + colorTd(d.today_rate, 2)
             + '<td>' + (d.vol === null ? '-' : d.vol.toLocaleString()) + '</td>'
             + colorTd(d.vol_chg_pct, 2)
             + '<td>' + fmt(d.MA7, 3) + '</td>'
-            + colorTd(d.dev_pct, 2)
-            + '<td>' + fmt(d.vol_ratio_0930, 3) + '</td>'
-            + colorTd(d.rate_0930, 2)
-            + '<td>' + fmt(d.vol_ratio_0931, 3) + '</td>'
-            + colorTd(d.rate_0931, 2)
-            + '</tr>';
+            + colorTd(d.dev_pct, 2);
+        if (!pure) {
+            row += '<td>' + fmt(d.vol_ratio_0930, 3) + '</td>'
+                + colorTd(d.rate_0930, 2)
+                + '<td>' + fmt(d.vol_ratio_0931, 3) + '</td>'
+                + colorTd(d.rate_0931, 2);
+        }
+        return row + '</tr>';
     }).join('');
 }
 function renderMinutes(data) {
@@ -132,6 +141,7 @@ function doQuery() {
             + '&date=' + document.getElementById('mdate').value;
     } else {
         url = '/api/query?code=' + encodeURIComponent(code);
+        if (document.getElementById('pure_day').checked) url += '&with_minutes=0';
         if (mode === 'recent') {
             url += '&recent=' + (document.getElementById('recent').value || 30);
         } else {
@@ -151,7 +161,8 @@ function doQuery() {
         }
         hint.textContent = '共 ' + resp.count + ' 条';
         document.getElementById('tbody').innerHTML =
-            mode === 'minutes' ? renderMinutes(resp.data) : renderDaily(resp.data);
+            mode === 'minutes' ? renderMinutes(resp.data)
+                               : renderDaily(resp.data, !resp.with_minutes);
     }).catch(function(err) {
         hint.textContent = '';
         document.getElementById('tbody').innerHTML =
@@ -160,9 +171,13 @@ function doQuery() {
 }
 document.querySelectorAll('input[name=mode]').forEach(function(r) {
     r.addEventListener('change', function() {
-        document.getElementById('row_range').style.display = r.value === 'range' ? '' : 'none';
-        document.getElementById('row_recent').style.display = r.value === 'recent' ? '' : 'none';
-        document.getElementById('row_minutes').style.display = r.value === 'minutes' ? '' : 'none';
+        var isMinutes = document.querySelector('input[name=mode]:checked').value === 'minutes';
+        document.getElementById('row_range').style.display =
+            document.querySelector('input[name=mode]:checked').value === 'range' ? '' : 'none';
+        document.getElementById('row_recent').style.display =
+            document.querySelector('input[name=mode]:checked').value === 'recent' ? '' : 'none';
+        document.getElementById('row_minutes').style.display = isMinutes ? '' : 'none';
+        document.getElementById('label_pure').style.display = isMinutes ? 'none' : '';
     });
 });
 document.getElementById('code').addEventListener('keydown', function(e) {
