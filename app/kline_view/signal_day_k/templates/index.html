@@ -145,6 +145,13 @@ async function loadSignals() {
   }
 }
 
+// 预取下一个信号的数据（fire-and-forget：让后端提前落库，点击「下一个」时本地毫秒级命中）
+function prefetchNext() {
+  if (SIGNALS.length < 2) return;
+  const next = SIGNALS[(Number(sel.value) + 1) % SIGNALS.length];
+  fetch(`/api/kline?code=${next.code}&date=${next.trade_date}`).catch(() => {});
+}
+
 async function query() {
   const s = SIGNALS[sel.value];
   if (!s) return;
@@ -160,6 +167,7 @@ async function query() {
     render(data);
     msg.textContent = `${data.code} 共 ${data.count} 个交易日（${data.dates[0]} ~ ${data.dates[data.count-1]}）`;
     if (data.note) noteEl.textContent = '提示：' + data.note;
+    prefetchNext();  // 当前图渲染完成后，后台预取下一个信号的数据
   } catch (e) {
     msg.textContent = '请求失败：' + e.message;
   } finally {
