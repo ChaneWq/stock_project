@@ -42,11 +42,11 @@ ZX_WARMUP = 120    # 预热根数：牛熊分界最长均线 m4=114（前113行�
 BEFORE = 200       # 信号日前展示的交易日数
 AFTER = 20         # 信号日后展示的交易日数
 
-# 展示指标键（payload.ma 与前端约定一致）
-IND_KEYS = ('ma7', 'zx_short_term_trend', 'zx_bull_bear_line')
+# 展示指标键（payload.ma 与前端约定一致；ma20 仅面板显示值，前端不画线）
+IND_KEYS = ('ma7', 'ma20', 'zx_short_term_trend', 'zx_bull_bear_line')
 
 # 指标实例创建一次复用（工程惯例，避免每请求重复实例化）
-_ma_ind = MAIndicator(periods=[MA_PERIOD])
+_ma_ind = MAIndicator(periods=[MA_PERIOD, 20])
 _zx_trend_ind = ZXShortTermTrendIndicator()
 _zx_bullbear_ind = ZXBullBearLineIndicator()
 

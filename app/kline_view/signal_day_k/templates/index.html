@@ -25,6 +25,7 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
 .up { color: #e64545; }
 .down { color: #1dbf74; }
 .ma7 { color: #e64545; }
+.ma20 { color: #9b59b6; }
 .zx_short_term_trend { color: #ffffff; }
 .zx_bull_bear_line { color: #ffd700; }
 .sig-tag { background: #f5a623; color: #fff; border-radius: 3px; padding: 0 6px; }
@@ -68,9 +69,11 @@ const UP = '#e64545', DOWN = '#1dbf74';   // A股习惯：红涨绿跌
 const SIG = '#f5a623';                    // 信号日标注色（金）
 let KDATA = null;
 let SIGNALS = [];
-const MA_KEYS = ['ma7', 'zx_short_term_trend', 'zx_bull_bear_line'];
+const PLOT_KEYS = ['ma7', 'zx_short_term_trend', 'zx_bull_bear_line'];  // 主图画线的指标
+const VALUE_KEYS = [...PLOT_KEYS, 'ma20'];  // 固定面板显示值的指标（ma20 不画线）
 const MA_LABEL = {
   ma7: 'MA7',
+  ma20: 'MA20',
   zx_short_term_trend: 'ZX短线趋势',
   zx_bull_bear_line: 'ZX牛熊线',
 };
@@ -95,7 +98,7 @@ function showBar(i) {
   const prevC = i > 0 ? d.candle[i - 1][1] : d.prev_close;
   const pct = prevC ? (c - prevC) / prevC * 100 : null;
   const cls = c >= prevC ? 'up' : 'down';
-  const mas = MA_KEYS.map(k =>
+  const mas = VALUE_KEYS.map(k =>
     `<span class="${k}">${MA_LABEL[k]} ${d.ma[k][i] ?? '-'}</span>`).join('　');
   const others = d.other_signals || [];
   let tag = '';
@@ -195,7 +198,7 @@ function render(d) {
     legend: {
       top: 0,
       textStyle: { color: '#ccc' },
-      data: ['K线', ...MA_KEYS.map(k => MA_LABEL[k])],
+      data: ['K线', ...PLOT_KEYS.map(k => MA_LABEL[k])],
     },
     grid: [
       { left: 60, right: 60, top: 34, height: '58%' },
@@ -227,7 +230,7 @@ function render(d) {
         markPoint,
         markLine: { symbol: 'none', silent: true, data: markLines() },
       },
-      ...MA_KEYS.map(k => ({
+      ...PLOT_KEYS.map(k => ({
         name: MA_LABEL[k], type: 'line', data: d.ma[k], xAxisIndex: 0, yAxisIndex: 0,
         symbol: 'none', smooth: true,
         lineStyle: { color: MA_STYLE[k].color, width: MA_STYLE[k].width },
