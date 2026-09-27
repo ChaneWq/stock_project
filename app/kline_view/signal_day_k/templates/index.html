@@ -394,7 +394,34 @@ function nextSignal() {
 document.getElementById('prev').addEventListener('click', prevSignal);
 document.getElementById('next').addEventListener('click', nextSignal);
 
-// 键盘快捷键：q=上一个 w=下一个；开关关闭或焦点在输入控件时忽略（避免打字误触发）
+// 复制当前信号代码到剪贴板：优先 clipboard API（127.0.0.1 安全上下文免授权），
+// 不可用时降级旧式 execCommand，成功后信息区短暂提示
+async function copyCode() {
+  if (!KDATA) return;
+  const code = KDATA.code;
+  let ok = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(code);
+      ok = true;
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = code;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+  } catch (e) {
+    ok = false;
+  }
+  msg.textContent = ok ? `已复制 ${code} 到剪贴板` : '复制失败';
+  setTimeout(() => { if (msg.textContent.includes('剪贴板') || msg.textContent === '复制失败') msg.textContent = ''; }, 2000);
+}
+
+// 键盘快捷键：q=上一个 w=下一个 c=复制代码；开关关闭或焦点在输入控件时忽略（避免打字误触发）
 function hotkeyEnabled() {
   return document.getElementById('hotkeyOn').checked;
 }
@@ -404,6 +431,7 @@ document.addEventListener('keydown', e => {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
   if (e.key === 'q' || e.key === 'Q') prevSignal();
   else if (e.key === 'w' || e.key === 'W') nextSignal();
+  else if (e.key === 'c' || e.key === 'C') copyCode();
 });
 
 // 页面加载后拉取信号清单并默认查询第一个
