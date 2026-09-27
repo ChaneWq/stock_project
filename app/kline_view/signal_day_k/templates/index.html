@@ -62,6 +62,10 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
     </div>
     <span class="tip">信号日：金色竖线+蜡烛金边；展示窗口可设前 n/后 n（修改即时生效），拖动滑块可看全部数据</span>
     <div class="form-item">
+      <label for="hotkeyOn">快捷键</label>
+      <input type="checkbox" id="hotkeyOn" checked style="accent-color:#f5a623">
+    </div>
+    <div class="form-item">
       <label for="hLineOn">收盘价线</label>
       <input type="checkbox" id="hLineOn" checked style="accent-color:#f5a623">
     </div>
@@ -376,15 +380,30 @@ const posNum = document.getElementById('posNum');
 posNum.addEventListener('change', jumpTo);
 posNum.addEventListener('keydown', e => { if (e.key === 'Enter') jumpTo(); });
 document.getElementById('btn').addEventListener('click', query);
-document.getElementById('prev').addEventListener('click', () => {
+// 上一个/下一个：按钮点击与键盘快捷键（q/w）共用
+function prevSignal() {
   if (!SIGNALS.length) return;
   sel.value = String((Number(sel.value) - 1 + SIGNALS.length) % SIGNALS.length);
   query();
-});
-document.getElementById('next').addEventListener('click', () => {
+}
+function nextSignal() {
   if (!SIGNALS.length) return;
   sel.value = String((Number(sel.value) + 1) % SIGNALS.length);
   query();
+}
+document.getElementById('prev').addEventListener('click', prevSignal);
+document.getElementById('next').addEventListener('click', nextSignal);
+
+// 键盘快捷键：q=上一个 w=下一个；开关关闭或焦点在输入控件时忽略（避免打字误触发）
+function hotkeyEnabled() {
+  return document.getElementById('hotkeyOn').checked;
+}
+document.addEventListener('keydown', e => {
+  if (!hotkeyEnabled()) return;
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (e.key === 'q' || e.key === 'Q') prevSignal();
+  else if (e.key === 'w' || e.key === 'W') nextSignal();
 });
 
 // 页面加载后拉取信号清单并默认查询第一个
