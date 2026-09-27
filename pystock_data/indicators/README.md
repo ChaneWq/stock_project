@@ -17,6 +17,7 @@ df = ma.calculate(basic_df)  # 输入DataFrame，返回 原字段 + 指标字段
 |---|---|---|---|---|
 | `MAIndicator` | 移动平均线 | periods=[5,10,20,60] | ma5 / ma10 / ma20 / ma60 | close |
 | `MASlopeIndicator` | MA斜率（均线环比%） | n=7, ks=[1] | ma7_slope1（可扩展） | close |
+| `MABiasIndicator` | MA偏离度（乖离率BIAS%） | periods=[7] | bias7（可扩展） | close |
 | `MACDIndicator` | MACD | 12/26/9 | macd_dif / macd_dea / macd_macd | close |
 | `KDJIndicator` | KDJ 随机指标 | n=9, m1=3, m2=3 | kdj_k / kdj_d / kdj_j | high, low, close |
 | `BBIIndicator` | BBI 多空均线 | 3/6/12/24 | bbi | close |
@@ -39,6 +40,7 @@ df = ma.calculate(basic_df)  # 输入DataFrame，返回 原字段 + 指标字段
 | `vwap_demo.py` | 分时均价线验证（真实分时 + 手工核算） |
 | `vchg_demo.py` | 量涨跌幅验证（真实日线 + 边界场景） |
 | `maslope_demo.py` | MA斜率验证（真实日线 + 边界场景） |
+| `mabias_demo.py` | MA偏离度（乖离率）验证（真实日线 + 边界场景） |
 
 运行方式（项目根目录下）：
 
