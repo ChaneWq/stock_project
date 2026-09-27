@@ -33,6 +33,13 @@ _COLUMNS = ['stock_code', 'datetime', 'trade_date',
 _fallback_ts = {}
 _fallback_lock = threading.Lock()
 
+# BasicBars 实例复用（工程惯例同指标类；避免每次回源重建连接与服务器探测的秒级开销）
+# 配合下方 _fetch_lock 串行使用，单 client 无并发冲突
+_basic_bars = BasicBars()
+
+# 回源串行锁：多线程（预取/并发请求）下回源排队执行，天然限速防封禁
+_fetch_lock = threading.Lock()
+
 
 def save_daily(df: pd.DataFrame) -> int:
     """
@@ -158,9 +165,14 @@ def get_daily(code: str, start: str = None, end: str = None) -> pd.DataFrame:
     # 需要回源：本地无数据，或请求末端超出本地水位
     if (latest is None or latest < needed_end) and _allow_fallback(code):
         try:
-            offset = _estimate_offset(start, latest)
-            df = BasicBars().get_daily(code, offset)
-            saved = save_daily(df)
+            with _fetch_lock:
+                # 双检：排队等锁期间数据可能已被其它请求回源完成
+                latest_in_lock = get_latest_date(code)
+                if latest_in_lock is not None and latest_in_lock >= needed_end:
+                    return load_daily(code, start, end)
+                offset = _estimate_offset(start, latest)
+                df = _basic_bars.get_daily(code, offset)
+                saved = save_daily(df)
         except Exception:
             _release_fallback(code)
             raise

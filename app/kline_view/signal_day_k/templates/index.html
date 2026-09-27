@@ -151,11 +151,26 @@ async function loadSignals() {
   }
 }
 
-// 预取下一个信号的数据（fire-and-forget：让后端提前落库，点击「下一个」时本地毫秒级命中）
-function prefetchNext() {
-  if (SIGNALS.length < 2) return;
-  const next = SIGNALS[(Number(sel.value) + 1) % SIGNALS.length];
-  fetch(`/api/kline?code=${next.code}&date=${next.trade_date}`).catch(() => {});
+// 全量预热：环形预取清单中所有信号（串行 + 间隔限速防封IP；已预取过的跳过）
+const PREFETCH_INTERVAL = 500;   // 每条预取间隔（毫秒），温和限速
+const prefetched = new Set();    // 页面生命周期内已预取的信号索引
+let prefetching = false;
+
+async function prefetchAll() {
+  if (SIGNALS.length < 2 || prefetching) return;
+  prefetching = true;
+  try {
+    for (let step = 1; step < SIGNALS.length; step++) {
+      const idx = (Number(sel.value) + step) % SIGNALS.length;
+      if (prefetched.has(idx)) continue;
+      const s = SIGNALS[idx];
+      await fetch(`/api/kline?code=${s.code}&date=${s.trade_date}`).catch(() => {});
+      prefetched.add(idx);
+      await new Promise(r => setTimeout(r, PREFETCH_INTERVAL));
+    }
+  } finally {
+    prefetching = false;
+  }
 }
 
 // 序号跳转：输入第 n 个（1 开始），clamp 到 [1, N] 后切换；非法输入回退当前序号
@@ -191,7 +206,7 @@ async function query() {
     msg.textContent = `${data.code} 共 ${data.count} 个交易日（${data.dates[0]} ~ ${data.dates[data.count-1]}）`;
     if (data.note) noteEl.textContent = '提示：' + data.note;
     syncPos();       // 序号框跟随当前信号
-    prefetchNext();  // 当前图渲染完成后，后台预取下一个信号的数据
+    prefetchAll();   // 当前图渲染完成后，后台串行预热全部信号数据
   } catch (e) {
     msg.textContent = '请求失败：' + e.message;
   } finally {
