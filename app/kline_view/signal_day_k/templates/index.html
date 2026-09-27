@@ -180,15 +180,6 @@ function render(d) {
   const markLines = () => [mkLine(sig, SIG, 'dashed', 1.5),
     ...others.map(i => mkLine(i, '#c0c4cc', 'dotted', 1))];
 
-  // 信号日最高价上方「信号」标签
-  const markPoint = {
-    silent: true,
-    symbol: 'roundRect', symbolSize: [38, 18], symbolOffset: [0, -14],
-    itemStyle: { color: SIG },
-    label: { show: true, formatter: '信号', fontSize: 11, color: '#fff' },
-    data: [{ coord: [sig, d.candle[sig][3]] }],
-  };
-
   chart.setOption({
     animation: false,
     axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#555' } },
@@ -231,7 +222,6 @@ function render(d) {
       {
         name: 'K线', type: 'candlestick', data: candleData, xAxisIndex: 0, yAxisIndex: 0,
         itemStyle: { color: UP, color0: DOWN, borderColor: UP, borderColor0: DOWN },
-        markPoint,
         markLine: { symbol: 'none', silent: true, data: markLines() },
       },
       ...PLOT_KEYS.map(k => ({
