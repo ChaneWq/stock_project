@@ -1,6 +1,6 @@
 # 指标库说明
 
-指标实现位于 `pystock_data/indicators/`，统一从 `pystock_data.indicators` 导入。
+指标实现位于本目录，统一从 `pystock_data.indicators` 导入。
 
 ## 使用方式
 
@@ -27,7 +27,9 @@ df = ma.calculate(basic_df)  # 输入DataFrame，返回 原字段 + 指标字段
 | `DZSIndicator` | 3日单针（区间百分位） | period=3 | dzs | high, low, close |
 | `DZTIndicator` | 21日单针（区间百分位） | period=21 | dzt | high, low, close |
 
-## 本目录 Demo
+## 测试 Demo
+
+位于 `pystock_data/demo/indicators/`：
 
 | 文件 | 内容 |
 |---|---|
