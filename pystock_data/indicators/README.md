@@ -20,6 +20,7 @@ df = ma.calculate(basic_df)  # 输入DataFrame，返回 原字段 + 指标字段
 | `KDJIndicator` | KDJ 随机指标 | n=9, m1=3, m2=3 | kdj_k / kdj_d / kdj_j | high, low, close |
 | `BBIIndicator` | BBI 多空均线 | 3/6/12/24 | bbi | close |
 | `VolumeMAIndicator` | 成交量均线 | periods=[5] | vma5（可扩展） | volume |
+| `VolumeChangeRateIndicator` | 量涨跌幅（量环比%） | 无 | vchg | volume |
 | `VWAPIndicator` | 分时均价线（黄线） | 无 | avg_price | volume + close（或 price），需分时数据 |
 | `ZXShortTermTrendIndicator` | ZX 短线趋势（双层EMA） | n=10 | zx_short_term_trend | close |
 | `ZXBullBearLineIndicator` | ZX 牛熊分界线 | 3/6/12/24 | zx_bull_bear_line | close |
@@ -35,6 +36,7 @@ df = ma.calculate(basic_df)  # 输入DataFrame，返回 原字段 + 指标字段
 |---|---|
 | `vma_demo.py` | 成交量均线验证（真实日线 + 手工核对） |
 | `vwap_demo.py` | 分时均价线验证（真实分时 + 手工核算） |
+| `vchg_demo.py` | 量涨跌幅验证（真实日线 + 边界场景） |
 
 运行方式（项目根目录下）：
 

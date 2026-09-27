@@ -10,6 +10,7 @@ from .kdj import KDJIndicator
 from .macd import MACDIndicator
 from .ma import MAIndicator
 from .needle import DZSIndicator, DZTIndicator
+from .vchg import VolumeChangeRateIndicator
 from .vma import VolumeMAIndicator
 from .vwap import VWAPIndicator
 from .zx import ZXBullBearLineIndicator, ZXShortTermTrendIndicator
@@ -23,6 +24,7 @@ __all__ = [
     'KDJIndicator',
     'MACDIndicator',
     'MAIndicator',
+    'VolumeChangeRateIndicator',
     'VolumeMAIndicator',
     'VWAPIndicator',
     'ZXBullBearLineIndicator',
