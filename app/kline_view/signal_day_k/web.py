@@ -42,11 +42,11 @@ ZX_WARMUP = 120    # 预热根数：牛熊分界最长均线 m4=114（前113行�
 BEFORE = 200       # 信号日前展示的交易日数
 AFTER = 20         # 信号日后展示的交易日数
 
-# 展示指标键（payload.ma 与前端约定一致；ma20 仅面板显示值，前端不画线）
-IND_KEYS = ('ma7', 'ma20', 'zx_short_term_trend', 'zx_bull_bear_line')
+# 展示指标键（payload.ma 与前端约定一致；vol_pct/ma7_slope 为派生指标，仅面板显示值不画线）
+IND_KEYS = ('ma7', 'zx_short_term_trend', 'zx_bull_bear_line', 'vol_pct', 'ma7_slope')
 
 # 指标实例创建一次复用（工程惯例，避免每请求重复实例化）
-_ma_ind = MAIndicator(periods=[MA_PERIOD, 20])
+_ma_ind = MAIndicator(periods=[MA_PERIOD])
 _zx_trend_ind = ZXShortTermTrendIndicator()
 _zx_bullbear_ind = ZXBullBearLineIndicator()
 
@@ -138,6 +138,14 @@ def api_kline():
     warm = _ma_ind.calculate(warm)
     warm = _zx_trend_ind.calculate(warm)
     warm = _zx_bullbear_ind.calculate(warm)
+
+    # 派生指标（与上一交易日对比，%）：vol_pct 量环比、ma7_slope MA7斜率
+    def _pct(s):
+        return (s.pct_change(fill_method=None) * 100).replace(
+            [float('inf'), float('-inf')], float('nan')).round(2)
+
+    warm['vol_pct'] = _pct(warm['volume'])
+    warm['ma7_slope'] = _pct(warm['ma7'])
 
     # 展示窗口前一根收盘价，作为首日涨跌幅基准
     prev_i = idx - BEFORE - 1
