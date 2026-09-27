@@ -25,17 +25,30 @@ from flask import Flask, render_template, jsonify, request
 # 兼容两种启动方式（惯例同 demo_day_k）
 try:
     from app.data_store import get_daily
+    from pystock_data.indicators import (
+        MAIndicator, ZXShortTermTrendIndicator, ZXBullBearLineIndicator)
 except ImportError:
     _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     if _PROJECT_ROOT not in sys.path:
         sys.path.insert(0, _PROJECT_ROOT)
     from app.data_store import get_daily
+    from pystock_data.indicators import (
+        MAIndicator, ZXShortTermTrendIndicator, ZXBullBearLineIndicator)
 
 app = Flask(__name__)
 
-MA_WINDOWS = (5, 10, 20, 60)
-BEFORE = 200   # 信号日前展示的交易日数
-AFTER = 20     # 信号日后展示的交易日数
+MA_PERIOD = 7      # 展示均线
+ZX_WARMUP = 120    # 预热根数：牛熊分界最长均线 m4=114（前113行为NaN），EMA双层平滑精度建议≥120
+BEFORE = 200       # 信号日前展示的交易日数
+AFTER = 20         # 信号日后展示的交易日数
+
+# 展示指标键（payload.ma 与前端约定一致）
+IND_KEYS = ('ma7', 'zx_short_term_trend', 'zx_bull_bear_line')
+
+# 指标实例创建一次复用（工程惯例，避免每请求重复实例化）
+_ma_ind = MAIndicator(periods=[MA_PERIOD])
+_zx_trend_ind = ZXShortTermTrendIndicator()
+_zx_bullbear_ind = ZXBullBearLineIndicator()
 
 _SIGNALS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'signals.csv')
 
@@ -86,8 +99,8 @@ def api_kline():
     except Exception:
         return jsonify({'error': '信号日期格式须为 YYYY-MM-DD'}), 400
 
-    # 多取 max(MA_WINDOWS)-1 根历史用于均线预热，展示窗口内所有日期才有完整均线值
-    buf = max(MA_WINDOWS) - 1
+    # 多取预热根数用于指标计算（ZX牛熊分界/EMA精度），展示窗口内所有日期才有完整指标值
+    buf = ZX_WARMUP
 
     # 按交易日数换算 start/end（工作日数+节假日余量），让 data_store 自动回补
     span = BEFORE + buf
@@ -119,11 +132,12 @@ def api_kline():
     else:
         idx = pos
 
-    # 预热窗口上算均线，再裁剪回展示窗口 [idx-200, idx+20]
+    # 预热窗口上算指标（指标类统一计算），再裁剪回展示窗口 [idx-200, idx+20]
     warm_lo = max(0, idx - BEFORE - buf)
     warm = df.iloc[warm_lo: idx + AFTER + 1].copy()
-    for n in MA_WINDOWS:
-        warm[f'ma{n}'] = warm['close'].rolling(n).mean()
+    warm = _ma_ind.calculate(warm)
+    warm = _zx_trend_ind.calculate(warm)
+    warm = _zx_bullbear_ind.calculate(warm)
 
     # 展示窗口前一根收盘价，作为首日涨跌幅基准
     prev_i = idx - BEFORE - 1
@@ -132,8 +146,8 @@ def api_kline():
     show_lo = max(0, idx - BEFORE)
     win = warm.iloc[show_lo - warm_lo:].reset_index(drop=True)
 
-    def ma_list(n):
-        return [None if pd.isna(v) else round(float(v), 2) for v in win[f'ma{n}']]
+    def ind_list(key):
+        return [None if pd.isna(v) else round(float(v), 2) for v in win[key]]
 
     # 同 code 其它信号日落在展示窗口内的索引（前端弱标注）
     other_idx = []
@@ -162,7 +176,7 @@ def api_kline():
         'candle': win[['open', 'close', 'low', 'high']].round(2).values.tolist(),
         'volumes': [int(v) for v in win['volume']],
         'prev_close': prev_close,
-        'ma': {f'ma{n}': ma_list(n) for n in MA_WINDOWS},
+        'ma': {k: ind_list(k) for k in IND_KEYS},
         'note': note,
     }
     return jsonify(payload)

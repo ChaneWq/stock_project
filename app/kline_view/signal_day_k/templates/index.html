@@ -24,10 +24,9 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
   padding: 5px 12px; font-size: 12px; line-height: 1.8; color: #555; }
 .up { color: #e64545; }
 .down { color: #1dbf74; }
-.ma5 { color: #f0a30a; }
-.ma10 { color: #3b7de9; }
-.ma20 { color: #9b59b6; }
-.ma60 { color: #16a085; }
+.ma7 { color: #f0a30a; }
+.zx_short_term_trend { color: #3b7de9; }
+.zx_bull_bear_line { color: #e0559d; }
 .sig-tag { background: #f5a623; color: #fff; border-radius: 3px; padding: 0 6px; }
 .sig-tag-other { background: #c0c4cc; color: #fff; border-radius: 3px; padding: 0 6px; }
 .note { margin-top: 8px; font-size: 13px; color: #b8860b; min-height: 0; }
@@ -69,12 +68,16 @@ const UP = '#e64545', DOWN = '#1dbf74';   // A股习惯：红涨绿跌
 const SIG = '#f5a623';                    // 信号日标注色（金）
 let KDATA = null;
 let SIGNALS = [];
-const MA_KEYS = ['ma5', 'ma10', 'ma20', 'ma60'];
+const MA_KEYS = ['ma7', 'zx_short_term_trend', 'zx_bull_bear_line'];
+const MA_LABEL = {
+  ma7: 'MA7',
+  zx_short_term_trend: 'ZX短线趋势',
+  zx_bull_bear_line: 'ZX牛熊线',
+};
 const MA_STYLE = {
-  ma5:  { color: '#f0a30a', width: 1 },
-  ma10: { color: '#3b7de9', width: 1 },
-  ma20: { color: '#9b59b6', width: 1.4 },
-  ma60: { color: '#16a085', width: 1.4 },
+  ma7:  { color: '#f0a30a', width: 1 },
+  zx_short_term_trend: { color: '#3b7de9', width: 1.4 },
+  zx_bull_bear_line: { color: '#e0559d', width: 1.4 },
 };
 
 function fmtVol(v) {
@@ -93,7 +96,7 @@ function showBar(i) {
   const pct = prevC ? (c - prevC) / prevC * 100 : null;
   const cls = c >= prevC ? 'up' : 'down';
   const mas = MA_KEYS.map(k =>
-    `<span class="${k}">${k.toUpperCase()} ${d.ma[k][i] ?? '-'}</span>`).join('　');
+    `<span class="${k}">${MA_LABEL[k]} ${d.ma[k][i] ?? '-'}</span>`).join('　');
   const others = d.other_signals || [];
   let tag = '';
   if (i === d.signal_index) tag = '　<span class="sig-tag">信号日</span>';
@@ -191,7 +194,7 @@ function render(d) {
     },
     legend: {
       top: 0,
-      data: ['K线', ...MA_KEYS.map(k => k.toUpperCase())],
+      data: ['K线', ...MA_KEYS.map(k => MA_LABEL[k])],
     },
     grid: [
       { left: 60, right: 60, top: 34, height: '58%' },
@@ -223,7 +226,7 @@ function render(d) {
         markLine: { symbol: 'none', silent: true, data: markLines() },
       },
       ...MA_KEYS.map(k => ({
-        name: k.toUpperCase(), type: 'line', data: d.ma[k], xAxisIndex: 0, yAxisIndex: 0,
+        name: MA_LABEL[k], type: 'line', data: d.ma[k], xAxisIndex: 0, yAxisIndex: 0,
         symbol: 'none', smooth: true,
         lineStyle: { color: MA_STYLE[k].color, width: MA_STYLE[k].width },
         emphasis: { disabled: true },
