@@ -26,14 +26,14 @@ from flask import Flask, render_template, jsonify, request
 try:
     from app.data_store import get_daily
     from pystock_data.indicators import (
-        MAIndicator, ZXShortTermTrendIndicator, ZXBullBearLineIndicator)
+        MAIndicator, ZXShortTermTrendIndicator, ZXBullBearLineIndicator, MABiasIndicator)
 except ImportError:
     _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     if _PROJECT_ROOT not in sys.path:
         sys.path.insert(0, _PROJECT_ROOT)
     from app.data_store import get_daily
     from pystock_data.indicators import (
-        MAIndicator, ZXShortTermTrendIndicator, ZXBullBearLineIndicator)
+        MAIndicator, ZXShortTermTrendIndicator, ZXBullBearLineIndicator, MABiasIndicator)
 
 app = Flask(__name__)
 
@@ -42,13 +42,14 @@ ZX_WARMUP = 120    # 预热根数：牛熊分界最长均线 m4=114（前113行�
 BEFORE = 200       # 信号日前展示的交易日数
 AFTER = 20         # 信号日后展示的交易日数
 
-# 展示指标键（payload.ma 与前端约定一致；vol_pct/ma7_slope 为派生指标，仅面板显示值不画线）
-IND_KEYS = ('ma7', 'zx_short_term_trend', 'zx_bull_bear_line', 'vol_pct', 'ma7_slope')
+# 展示指标键（payload.ma 与前端约定一致；vol_pct/ma7_slope/bias7 为派生指标，仅面板显示值不画线）
+IND_KEYS = ('ma7', 'zx_short_term_trend', 'zx_bull_bear_line', 'vol_pct', 'ma7_slope', 'bias7')
 
 # 指标实例创建一次复用（工程惯例，避免每请求重复实例化）
 _ma_ind = MAIndicator(periods=[MA_PERIOD])
 _zx_trend_ind = ZXShortTermTrendIndicator()
 _zx_bullbear_ind = ZXBullBearLineIndicator()
+_mabias_ind = MABiasIndicator()  # 默认 periods=[7] → bias7
 
 _SIGNALS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'signals.csv')
 
@@ -138,6 +139,7 @@ def api_kline():
     warm = _ma_ind.calculate(warm)
     warm = _zx_trend_ind.calculate(warm)
     warm = _zx_bullbear_ind.calculate(warm)
+    warm = _mabias_ind.calculate(warm)  # bias7 收盘价相对MA7偏离%
 
     # 派生指标（与上一交易日对比，%）：vol_pct 量环比、ma7_slope MA7斜率
     def _pct(s):

@@ -27,6 +27,7 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
 .ma7 { color: #e64545; }
 .vol_pct { color: #4dd0e1; }
 .ma7_slope { color: #b39ddb; }
+.bias7 { color: #7ee787; }
 .zx_short_term_trend { color: #ffffff; }
 .zx_bull_bear_line { color: #ffd700; }
 .sig-tag { background: #f5a623; color: #fff; border-radius: 3px; padding: 0 6px; }
@@ -78,15 +79,16 @@ const SIG = '#f5a623';                    // 信号日标注色（金）
 let KDATA = null;
 let SIGNALS = [];
 const PLOT_KEYS = ['ma7', 'zx_short_term_trend', 'zx_bull_bear_line'];  // 主图画线的指标
-// 固定面板显示值的指标（不画线）：量涨跌幅=量环比%、MA斜率=MA7较上一交易日环比%
-const VALUE_KEYS = [...PLOT_KEYS, 'vol_pct', 'ma7_slope'];
-const PCT_KEYS = ['vol_pct', 'ma7_slope'];  // 百分比类值，面板显示带 %
+// 固定面板显示值的指标（不画线）：量涨跌幅=量环比%、MA斜率=MA7较上一交易日环比%、MA7偏离度=BIAS%
+const VALUE_KEYS = [...PLOT_KEYS, 'vol_pct', 'ma7_slope', 'bias7'];
+const PCT_KEYS = ['vol_pct', 'ma7_slope', 'bias7'];  // 百分比类值，面板显示带 %
 const MA_LABEL = {
   ma7: 'MA7',
   zx_short_term_trend: 'ZX短线趋势',
   zx_bull_bear_line: 'ZX牛熊线',
   vol_pct: '量涨跌幅',
   ma7_slope: 'MA斜率',
+  bias7: 'MA7偏离度',
 };
 const MA_STYLE = {
   ma7:  { color: '#e64545', width: 1 },
