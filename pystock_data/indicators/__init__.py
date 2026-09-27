@@ -9,6 +9,7 @@ from .bbi import BBIIndicator
 from .kdj import KDJIndicator
 from .macd import MACDIndicator
 from .ma import MAIndicator
+from .maslope import MASlopeIndicator
 from .needle import DZSIndicator, DZTIndicator
 from .vchg import VolumeChangeRateIndicator
 from .vma import VolumeMAIndicator
@@ -24,6 +25,7 @@ __all__ = [
     'KDJIndicator',
     'MACDIndicator',
     'MAIndicator',
+    'MASlopeIndicator',
     'VolumeChangeRateIndicator',
     'VolumeMAIndicator',
     'VWAPIndicator',
