@@ -148,7 +148,8 @@ def get_daily(code: str, start: str = None, end: str = None) -> pd.DataFrame:
 
     注意：
         - 回源深度按请求范围自动估算（start 较早会自动深回补）
-        - 同一股票回源限频 FALLBACK_TTL 秒（停牌/非交易日不反复回源）
+        - 同一股票回源限频 FALLBACK_TTL 秒（停牌/非交易日不反复回源）；
+          仅回源成功才占用限频窗口，失败/空响应立即释放可重试
     """
     code = (code or '').strip()
     needed_end = end or datetime.now().strftime('%Y-%m-%d')
@@ -156,9 +157,16 @@ def get_daily(code: str, start: str = None, end: str = None) -> pd.DataFrame:
 
     # 需要回源：本地无数据，或请求末端超出本地水位
     if (latest is None or latest < needed_end) and _allow_fallback(code):
-        offset = _estimate_offset(start, latest)
-        df = BasicBars().get_daily(code, offset)
-        save_daily(df)
+        try:
+            offset = _estimate_offset(start, latest)
+            df = BasicBars().get_daily(code, offset)
+            saved = save_daily(df)
+        except Exception:
+            _release_fallback(code)
+            raise
+        if saved == 0:
+            # 空响应不占用限频窗口：下次请求立即可重试
+            _release_fallback(code)
 
     return load_daily(code, start, end)
 
@@ -185,3 +193,9 @@ def _allow_fallback(code: str) -> bool:
             return False
         _fallback_ts[code] = now
         return True
+
+
+def _release_fallback(code: str) -> None:
+    """回源失败/空响应时释放限频窗口，下次请求可立即重试"""
+    with _fallback_lock:
+        _fallback_ts.pop(code, None)
