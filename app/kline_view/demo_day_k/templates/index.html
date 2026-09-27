@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>日K线可视化（demo）</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: "Microsoft YaHei", sans-serif; background: #f5f6fa; padding: 16px; color: #333; }
+h1 { font-size: 20px; margin-bottom: 14px; }
+.panel { background: #fff; border-radius: 8px; padding: 14px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.form-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.form-item { display: flex; align-items: center; gap: 6px; }
+.form-item label { font-size: 13px; white-space: nowrap; }
+.form-item input { padding: 6px 8px; border: 1px solid #dcdfe6; border-radius: 4px; width: 110px; font-size: 13px; }
+button { padding: 7px 22px; background: #409eff; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; }
+button:disabled { background: #a0cfff; cursor: not-allowed; }
+.tip { font-size: 12px; color: #909399; }
+#chart { width: 100%; height: 640px; }
+.chart-wrap { position: relative; }
+/* 左上角固定数据面板：随十字光标刷新内容，位置固定，不遮挡交互 */
+.info-panel { position: absolute; top: 6px; left: 66px; z-index: 10; pointer-events: none;
+  background: rgba(255,255,255,.88); border: 1px solid #ebeef5; border-radius: 6px;
+  padding: 5px 12px; font-size: 12px; line-height: 1.8; color: #555; }
+.up { color: #e64545; }
+.down { color: #1dbf74; }
+.ma5 { color: #f0a30a; }
+.ma10 { color: #3b7de9; }
+.ma20 { color: #9b59b6; }
+.ma60 { color: #16a085; }
+.msg { margin-top: 8px; font-size: 13px; color: #e64545; min-height: 18px; }
+</style>
+</head>
+<body>
+
+<h1>日K线可视化（demo）</h1>
+<div class="panel">
+  <div class="form-row">
+    <div class="form-item">
+      <label>股票代码</label>
+      <input type="text" id="code" value="000001" maxlength="6" placeholder="6位代码">
+    </div>
+    <div class="form-item">
+      <label>最近</label>
+      <input type="number" id="recent" value="120" min="10" max="800">
+      <label>个交易日</label>
+    </div>
+    <button id="btn">查询</button>
+    <span class="tip">支持缩放拖动，底部滑块选择区间；移动十字光标，左上角固定面板显示对应数据</span>
+  </div>
+  <div class="msg" id="msg"></div>
+</div>
+
+<div class="panel">
+  <div class="chart-wrap">
+    <div id="chart"></div>
+    <div class="info-panel" id="infoPanel">加载中...</div>
+  </div>
+</div>
+
+<script>
+const chart = echarts.init(document.getElementById('chart'));
+const infoPanel = document.getElementById('infoPanel');
+const UP = '#e64545', DOWN = '#1dbf74';  // A股习惯：红涨绿跌
+let KDATA = null;
+const MA_KEYS = ['ma5', 'ma10', 'ma20', 'ma60'];
+const MA_STYLE = {
+  ma5:  { color: '#f0a30a', width: 1 },
+  ma10: { color: '#3b7de9', width: 1 },
+  ma20: { color: '#9b59b6', width: 1.4 },
+  ma60: { color: '#16a085', width: 1.4 },
+};
+
+function fmtVol(v) {
+  if (v == null) return '-';
+  if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿';
+  if (v >= 1e4) return (v / 1e4).toFixed(1) + '万';
+  return v;
+}
+
+// 固定数据面板：显示第 i 根K线的数据（十字光标联动）
+function showBar(i) {
+  const d = KDATA;
+  if (!d || i == null || i < 0 || i >= d.count) return;
+  const [o, c, l, h] = d.candle[i];
+  const prevC = i > 0 ? d.candle[i - 1][1] : d.prev_close;
+  const pct = prevC ? (c - prevC) / prevC * 100 : null;
+  const cls = c >= prevC ? 'up' : 'down';
+  const mas = MA_KEYS.map(k =>
+    `<span class="${k}">${k.toUpperCase()} ${d.ma[k][i] ?? '-'}</span>`).join('　');
+  infoPanel.innerHTML =
+    `<div><b>${d.dates[i]}</b>　<span class="${cls}">${pct == null ? '-' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%'}</span></div>` +
+    `<div>开 <span class="${prevC && o >= prevC ? 'up' : 'down'}">${o}</span>　高 ${h}　低 ${l}　收 <span class="${cls}">${c}</span></div>` +
+    `<div>量 ${fmtVol(d.volumes[i])}</div>` +
+    `<div>${mas}</div>`;
+}
+
+async function query() {
+  const code = document.getElementById('code').value.trim();
+  const recent = document.getElementById('recent').value.trim();
+  const msg = document.getElementById('msg');
+  const btn = document.getElementById('btn');
+  msg.textContent = '';
+  if (!code) { msg.textContent = '请输入股票代码'; return; }
+
+  btn.disabled = true;
+  btn.textContent = '查询中...';
+  try {
+    const res = await fetch(`/api/kline?code=${code}&recent=${recent}`);
+    const data = await res.json();
+    if (!res.ok) { msg.textContent = data.error || '查询失败'; chart.clear(); return; }
+    render(data);
+    msg.textContent = `${code} 共 ${data.count} 个交易日（${data.dates[0]} ~ ${data.dates[data.count-1]}）`;
+  } catch (e) {
+    msg.textContent = '请求失败：' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '查询';
+  }
+}
+
+function render(d) {
+  KDATA = d;
+  // 成交量按当日涨跌着色
+  const volData = d.volumes.map((v, i) => {
+    const [o, c] = d.candle[i];
+    return { value: v, itemStyle: { color: c >= o ? UP : DOWN, opacity: .85 } };
+  });
+
+  chart.setOption({
+    animation: false,
+    axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#555' } },
+    // 悬浮框改为透明空内容：仅保留十字光标与事件驱动固定面板
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      borderWidth: 0, padding: 0, backgroundColor: 'transparent',
+      formatter: () => '',
+    },
+    legend: {
+      top: 0,
+      data: ['K线', ...Object.keys(MA_STYLE).map(k => k.toUpperCase())],
+    },
+    grid: [
+      { left: 60, right: 60, top: 30, height: '58%' },
+      { left: 60, right: 60, top: '74%', height: '14%' },
+    ],
+    xAxis: [
+      { type: 'category', data: d.dates, gridIndex: 0, boundaryGap: true,
+        axisLine: { lineStyle: { color: '#aaa' } }, axisLabel: { show: false }, axisTick: { show: false },
+        axisPointer: { show: true, label: { show: false } } },
+      { type: 'category', data: d.dates, gridIndex: 1, boundaryGap: true,
+        axisLine: { lineStyle: { color: '#aaa' } }, axisLabel: { color: '#666' },
+        axisPointer: { show: true, label: { show: false } } },
+    ],
+    yAxis: [
+      { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: '#eee' } },
+        axisPointer: { show: true, label: { show: true } } },
+      { gridIndex: 1, axisLabel: { formatter: v => fmtVol(v) }, splitLine: { show: false },
+        axisPointer: { show: false } },
+    ],
+    dataZoom: [
+      { type: 'inside', xAxisIndex: [0, 1], start: 60, end: 100 },
+      { type: 'slider', xAxisIndex: [0, 1], top: '93%', height: 18, start: 60, end: 100 },
+    ],
+    series: [
+      {
+        name: 'K线', type: 'candlestick', data: d.candle, xAxisIndex: 0, yAxisIndex: 0,
+        itemStyle: { color: UP, color0: DOWN, borderColor: UP, borderColor0: DOWN },
+      },
+      ...Object.keys(MA_STYLE).map(k => ({
+        name: k.toUpperCase(), type: 'line', data: d.ma[k], xAxisIndex: 0, yAxisIndex: 0,
+        symbol: 'none', smooth: true,
+        lineStyle: { color: MA_STYLE[k].color, width: MA_STYLE[k].width },
+        emphasis: { disabled: true },
+      })),
+      {
+        name: '成交量', type: 'bar', data: volData, xAxisIndex: 1, yAxisIndex: 1,
+      },
+    ],
+  }, true);
+
+  showBar(d.count - 1);  // 面板默认显示最新一根
+}
+
+// 十字光标移动 → 刷新固定面板；移出图表 → 回到最新一根
+chart.on('updateAxisPointer', function (event) {
+  const info = event.axesInfo && event.axesInfo[0];
+  if (!info) return;
+  showBar(Math.round(info.value));
+});
+chart.getZr().on('globalout', function () {
+  if (KDATA) showBar(KDATA.count - 1);
+});
+
+document.getElementById('btn').addEventListener('click', query);
+document.getElementById('code').addEventListener('keydown', e => { if (e.key === 'Enter') query(); });
+
+// 页面加载后默认查询一次
+query();
+</script>
+</body>
+</html>
