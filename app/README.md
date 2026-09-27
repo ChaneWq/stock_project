@@ -86,13 +86,24 @@
 
 ## 9. kline_view — 日K线可视化
 
-每种实现独立子目录。当前：`demo_day_k`（demo 版）。
+每种实现独立子目录。当前：`demo_day_k`（demo 版）、`signal_day_k`（信号日回看）。
+
+### demo_day_k — 日K线可视化（demo）
 
 - Flask Web 服务（端口 5003），输入 6 位代码查看日K蜡烛图
 - 主图：蜡烛图（红涨绿跌）+ MA5/10/20/60 均线；副图：成交量（按当日涨跌着色）
 - 交互：区域缩放拖动、底部滑块选区间、十字光标联动左上角固定数据面板（日期/涨跌幅/OHLC/成交量/均线值，悬浮框已移除）
 - 数据走 `data_store.get_daily`（本地 SQLite 优先，缺失按请求深度自动回源回写）
 - 一键启动（demo 版）：`demo_day_k/demo.bat`，或 `python -m app.kline_view.demo_day_k.web`
+
+### signal_day_k — 信号日K线回看
+
+- Flask Web 服务（端口 5004），信号清单在 `signals.csv`（列：code,trade_date，UTF-8 BOM，本地维护不入 git）
+- 展示信号日前 200 个交易日 ~ 后 20 个交易日的日K（共 221 根），MA5/10/20/60
+- 信号日醒目标注：蜡烛金边 + 金色竖线（主图/成交量副图贯穿）+ 最高价上方「信号」标签；同股其它信号日以灰色点线弱标注
+- 信号下拉选择 / 上一个下一个切换，打开图表信号日即居中可见；固定数据面板十字光标联动，信号日带高亮标记
+- 边界处理：信号日为非交易日自动标注至前一交易日；信号日过近后侧不足 20 日显示到最新；页面均给出提示
+- 一键启动：`signal_day_k/run.bat`，或 `python -m app.kline_view.signal_day_k.web`
 
 ---
 
