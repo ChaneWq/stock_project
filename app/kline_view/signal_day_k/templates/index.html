@@ -47,7 +47,14 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
     <button id="prev">上一个</button>
     <button id="next">下一个</button>
     <button id="btn">查询</button>
-    <span class="tip">信号日：金色竖线 + 蜡烛金边 + 「信号」标签；灰色点线为同股其它信号</span>
+    <div class="form-item">
+      <label>展示</label>
+      <input type="number" id="viewBefore" value="200" min="0" max="200" style="width:66px">
+      <label>前 /</label>
+      <input type="number" id="viewAfter" value="20" min="0" max="20" style="width:66px">
+      <label>后</label>
+    </div>
+    <span class="tip">信号日：金色竖线+蜡烛金边；展示窗口可设前 n/后 n（修改即时生效），拖动滑块可看全部数据</span>
   </div>
   <div class="note" id="note"></div>
   <div class="msg" id="msg"></div>
@@ -155,6 +162,31 @@ async function query() {
   }
 }
 
+// 展示窗口设置：信号日前 n / 后 n 个交易日（默认 200/20 = 全量展示）
+function readViewN() {
+  const b = parseInt(document.getElementById('viewBefore').value, 10);
+  const a = parseInt(document.getElementById('viewAfter').value, 10);
+  return {
+    before: (isNaN(b) || b < 0) ? 200 : b,
+    after: (isNaN(a) || a < 0) ? 20 : a,
+  };
+}
+
+// 按设置把展示窗口定位到 信号日前 n ~ 后 n（clamp 到数据范围，修改即时生效无需重新取数）
+function applyView() {
+  const d = KDATA;
+  if (!d) return;
+  const { before, after } = readViewN();
+  const lo = Math.max(0, d.signal_index - before);
+  const hi = Math.min(d.count - 1, d.signal_index + after);
+  chart.setOption({
+    dataZoom: [
+      { type: 'inside', xAxisIndex: [0, 1], startValue: lo, endValue: hi },
+      { type: 'slider', xAxisIndex: [0, 1], startValue: lo, endValue: hi },
+    ],
+  });
+}
+
 function render(d) {
   KDATA = d;
   const sig = d.signal_index;
@@ -237,6 +269,7 @@ function render(d) {
     ],
   }, true);
 
+  applyView();   // 按展示窗口设置定位（信号日前 n / 后 n）
   showBar(sig);  // 面板默认显示信号日
 }
 
@@ -251,6 +284,9 @@ chart.getZr().on('globalout', function () {
 });
 
 sel.addEventListener('change', query);
+// 展示窗口前 n/后 n 修改即时重新定位（不重新取数）
+document.getElementById('viewBefore').addEventListener('change', applyView);
+document.getElementById('viewAfter').addEventListener('change', applyView);
 document.getElementById('btn').addEventListener('click', query);
 document.getElementById('prev').addEventListener('click', () => {
   if (!SIGNALS.length) return;
