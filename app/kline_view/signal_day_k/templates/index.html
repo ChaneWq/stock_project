@@ -56,6 +56,10 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       <label>后</label>
     </div>
     <span class="tip">信号日：金色竖线+蜡烛金边；展示窗口可设前 n/后 n（修改即时生效），拖动滑块可看全部数据</span>
+    <div class="form-item">
+      <label for="hLineOn">收盘价线</label>
+      <input type="checkbox" id="hLineOn" checked style="accent-color:#f5a623">
+    </div>
   </div>
   <div class="note" id="note"></div>
   <div class="msg" id="msg"></div>
@@ -189,10 +193,40 @@ function applyView() {
   });
 }
 
+// 信号日标注竖线：主图金色虚线，同股其它信号日灰色点线（主图/副图共用）
+function buildVLines(d) {
+  const mk = (i, color, type, width) => ({
+    xAxis: i, label: { show: false }, lineStyle: { color, type, width },
+  });
+  return [mk(d.signal_index, SIG, 'dashed', 1.5),
+    ...(d.other_signals || []).map(i => mk(i, '#c0c4cc', 'dotted', 1))];
+}
+
+// 信号日收盘价水平参考线（仅主图）：金色虚线，右端价格标签远离K线防遮挡
+function buildHLine(d) {
+  const closePrice = d.candle[d.signal_index][1];
+  return {
+    yAxis: closePrice,
+    lineStyle: { color: SIG, type: 'dashed', width: 0.77 },
+    label: {
+      show: true, position: 'end', formatter: closePrice.toFixed(2),
+      color: '#fff', backgroundColor: SIG, padding: [1, 4], borderRadius: 2, fontSize: 11,
+    },
+  };
+}
+
+function hLineEnabled() {
+  return document.getElementById('hLineOn').checked;
+}
+
+// 主图 markLine 数据：竖线 + 开关控制的收盘价水平线
+function buildMarkData(d) {
+  return hLineEnabled() ? [...buildVLines(d), buildHLine(d)] : buildVLines(d);
+}
+
 function render(d) {
   KDATA = d;
   const sig = d.signal_index;
-  const others = d.other_signals || [];
 
   // 信号日蜡烛金色描边；其余维持红涨绿跌
   const candleData = d.candle.map((arr, i) => i === sig
@@ -206,13 +240,6 @@ function render(d) {
       ? { color: SIG, opacity: .9 }
       : { color: d.candle[i][1] >= d.candle[i][0] ? UP : DOWN, opacity: .85 },
   }));
-
-  // 竖线：信号日金色虚线，同股其它信号日灰色点线（主图/副图各一份独立配置）
-  const mkLine = (i, color, type, width) => ({
-    xAxis: i, label: { show: false }, lineStyle: { color, type, width },
-  });
-  const markLines = () => [mkLine(sig, SIG, 'dashed', 1.5),
-    ...others.map(i => mkLine(i, '#c0c4cc', 'dotted', 1))];
 
   chart.setOption({
     animation: false,
@@ -256,7 +283,7 @@ function render(d) {
       {
         name: 'K线', type: 'candlestick', data: candleData, xAxisIndex: 0, yAxisIndex: 0,
         itemStyle: { color: UP, color0: DOWN, borderColor: UP, borderColor0: DOWN },
-        markLine: { symbol: 'none', silent: true, data: markLines() },
+        markLine: { symbol: 'none', silent: true, data: buildMarkData(d) },
       },
       ...PLOT_KEYS.map(k => ({
         name: MA_LABEL[k], type: 'line', data: d.ma[k], xAxisIndex: 0, yAxisIndex: 0,
@@ -266,7 +293,7 @@ function render(d) {
       })),
       {
         name: '成交量', type: 'bar', data: volData, xAxisIndex: 1, yAxisIndex: 1,
-        markLine: { symbol: 'none', silent: true, data: markLines() },
+        markLine: { symbol: 'none', silent: true, data: buildVLines(d) },
       },
     ],
   }, true);
@@ -289,6 +316,14 @@ sel.addEventListener('change', query);
 // 展示窗口前 n/后 n 修改即时重新定位（不重新取数）
 document.getElementById('viewBefore').addEventListener('change', applyView);
 document.getElementById('viewAfter').addEventListener('change', applyView);
+// 收盘价水平线开关：仅更新主图 markLine，不重渲染、不重置缩放
+document.getElementById('hLineOn').addEventListener('change', () => {
+  const d = KDATA;
+  if (!d) return;
+  chart.setOption({
+    series: [{ markLine: { symbol: 'none', silent: true, data: buildMarkData(d) } }],
+  });
+});
 document.getElementById('btn').addEventListener('click', query);
 document.getElementById('prev').addEventListener('click', () => {
   if (!SIGNALS.length) return;
