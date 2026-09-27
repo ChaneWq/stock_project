@@ -46,6 +46,11 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       <select id="signal"></select>
     </div>
     <button id="prev">上一个</button>
+    <div class="form-item">
+      <label>第</label>
+      <input type="number" id="posNum" min="1" style="width:60px">
+      <label id="posTotal">/ -</label>
+    </div>
     <button id="next">下一个</button>
     <button id="btn">查询</button>
     <div class="form-item">
@@ -139,6 +144,7 @@ async function loadSignals() {
     SIGNALS = list;
     sel.innerHTML = SIGNALS.map((s, i) =>
       `<option value="${i}">${s.code}　${s.trade_date}</option>`).join('');
+    document.getElementById('posTotal').textContent = `/ ${SIGNALS.length}`;
     query();
   } catch (e) {
     msg.textContent = '加载信号清单失败：' + e.message;
@@ -150,6 +156,23 @@ function prefetchNext() {
   if (SIGNALS.length < 2) return;
   const next = SIGNALS[(Number(sel.value) + 1) % SIGNALS.length];
   fetch(`/api/kline?code=${next.code}&date=${next.trade_date}`).catch(() => {});
+}
+
+// 序号跳转：输入第 n 个（1 开始），clamp 到 [1, N] 后切换；非法输入回退当前序号
+function jumpTo() {
+  if (!SIGNALS.length) return;
+  const pos = document.getElementById('posNum');
+  let n = parseInt(pos.value, 10);
+  if (isNaN(n)) { pos.value = String(Number(sel.value) + 1); return; }
+  n = Math.max(1, Math.min(SIGNALS.length, n));
+  pos.value = String(n);
+  sel.value = String(n - 1);
+  query();
+}
+
+// 序号框与当前信号同步（查询/切换成功后调用）
+function syncPos() {
+  document.getElementById('posNum').value = String(Number(sel.value) + 1);
 }
 
 async function query() {
@@ -167,6 +190,7 @@ async function query() {
     render(data);
     msg.textContent = `${data.code} 共 ${data.count} 个交易日（${data.dates[0]} ~ ${data.dates[data.count-1]}）`;
     if (data.note) noteEl.textContent = '提示：' + data.note;
+    syncPos();       // 序号框跟随当前信号
     prefetchNext();  // 当前图渲染完成后，后台预取下一个信号的数据
   } catch (e) {
     msg.textContent = '请求失败：' + e.message;
@@ -332,6 +356,10 @@ document.getElementById('hLineOn').addEventListener('change', () => {
     series: [{ markLine: { symbol: 'none', silent: true, data: buildMarkData(d) } }],
   });
 });
+// 序号跳转：修改/回车即跳到第 n 个信号
+const posNum = document.getElementById('posNum');
+posNum.addEventListener('change', jumpTo);
+posNum.addEventListener('keydown', e => { if (e.key === 'Enter') jumpTo(); });
 document.getElementById('btn').addEventListener('click', query);
 document.getElementById('prev').addEventListener('click', () => {
   if (!SIGNALS.length) return;
