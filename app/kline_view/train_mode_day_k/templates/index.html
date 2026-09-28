@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>日K训练模式</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: "Microsoft YaHei", sans-serif; background: #f5f6fa; padding: 16px; color: #333; }
+h1 { font-size: 20px; margin-bottom: 14px; }
+.panel { background: #fff; border-radius: 8px; padding: 14px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+.form-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.form-item { display: flex; align-items: center; gap: 6px; }
+.form-item label { font-size: 13px; white-space: nowrap; }
+select { padding: 6px 8px; border: 1px solid #dcdfe6; border-radius: 4px; font-size: 13px; min-width: 200px; }
+button { padding: 7px 16px; background: #409eff; color: #fff; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; }
+button:disabled { background: #a0cfff; cursor: not-allowed; }
+#nextDay { background: #67c23a; }
+#nextDay:disabled { background: #b3e19d; }
+#trainBtn { background: #e6a23c; }
+#resetBtn { background: #909399; }
+#resetBtn:disabled { background: #c8c9cc; }
+#buyBtn { background: #e64545; }
+#buyBtn:disabled { background: #f0b3b3; }
+#sellBtn { background: #1dbf74; }
+#sellBtn:disabled { background: #a8e6c8; }
+.acct { font-size: 13px; }
+.acct b { margin: 0 2px; }
+.result { margin-top: 8px; font-size: 13px; line-height: 1.8; }
+.result table { border-collapse: collapse; margin-top: 6px; font-size: 12px; }
+.result th, .result td { border: 1px solid #e4e7ed; padding: 2px 10px; text-align: center; }
+.tip { font-size: 12px; color: #909399; }
+#chart { width: 100%; height: 640px; background: #1e1e1e; border-radius: 4px; }
+.chart-wrap { position: relative; }
+/* 左上角固定数据面板：随十字光标刷新内容，位置固定，不遮挡交互（深色底适配白色指标标签） */
+.info-panel { position: absolute; top: 6px; left: 66px; z-index: 10; pointer-events: none;
+  background: rgba(24,24,24,.85); border: 1px solid #444; border-radius: 6px;
+  padding: 5px 12px; font-size: 12px; line-height: 1.8; color: #ccc; }
+.up { color: #e64545; }
+.down { color: #1dbf74; }
+.ma7 { color: #e64545; }
+.vol_pct { color: #4dd0e1; }
+.ma7_slope { color: #b39ddb; }
+.bias7 { color: #7ee787; }
+.zx_short_term_trend { color: #ffffff; }
+.zx_bull_bear_line { color: #ffd700; }
+.sig-tag { background: #f5a623; color: #fff; border-radius: 3px; padding: 0 6px; }
+.sig-tag-other { background: #c0c4cc; color: #fff; border-radius: 3px; padding: 0 6px; }
+.nd-prog { font-size: 13px; color: #67c23a; white-space: nowrap; }
+.note { margin-top: 8px; font-size: 13px; color: #b8860b; min-height: 0; }
+.msg { margin-top: 8px; font-size: 13px; color: #e64545; min-height: 18px; }
+</style>
+</head>
+<body>
+
+<h1>日K训练模式（前200 / 逐日揭晓，防偷看未来）</h1>
+<div class="panel">
+  <div class="form-row">
+    <div class="form-item">
+      <label>信号</label>
+      <select id="signal"></select>
+    </div>
+    <button id="prev">上一个</button>
+    <div class="form-item">
+      <label>第</label>
+      <input type="number" id="posNum" min="1" style="width:60px">
+      <label id="posTotal">/ -</label>
+    </div>
+    <button id="next">下一个</button>
+    <button id="btn">查询</button>
+    <button id="trainBtn">开始训练</button>
+    <button id="resetBtn">重置账户</button>
+    <div class="form-item">
+      <label>展示</label>
+      <input type="number" id="viewBefore" value="200" min="0" max="200" style="width:66px">
+      <label>前</label>
+    </div>
+    <span class="tip">开始训练后锁定切换个股；Buy/Sell 按最新揭晓日收盘价全仓整手交易；结束训练须先清仓</span>
+    <div class="form-item">
+      <label for="hotkeyOn">快捷键</label>
+      <input type="checkbox" id="hotkeyOn" checked style="accent-color:#f5a623">
+    </div>
+    <div class="form-item">
+      <label for="hLineOn">收盘价线</label>
+      <input type="checkbox" id="hLineOn" checked style="accent-color:#f5a623">
+    </div>
+  </div>
+  <div class="form-row">
+    <button id="buyBtn" disabled>Buy</button>
+    <button id="sellBtn" disabled>Sell</button>
+    <button id="nextDay" disabled>Next day</button>
+    <span class="nd-prog" id="ndProg">信号日 +0 / 20</span>
+    <span class="acct" id="acctPanel"></span>
+  </div>
+  <div class="note" id="note"></div>
+  <div class="msg" id="msg"></div>
+  <div class="result" id="resultPanel" style="display:none"></div>
+</div>
+
+<div class="panel">
+  <div class="chart-wrap">
+    <div id="chart"></div>
+    <div class="info-panel" id="infoPanel">加载中...</div>
+  </div>
+</div>
+
+<script>
+const chart = echarts.init(document.getElementById('chart'));
+const infoPanel = document.getElementById('infoPanel');
+const msg = document.getElementById('msg');
+const noteEl = document.getElementById('note');
+const sel = document.getElementById('signal');
+const UP = '#e64545', DOWN = '#1dbf74';   // A股习惯：红涨绿跌
+const SIG = '#f5a623';                    // 信号日标注色（金）
+let KDATA = null;
+let SIGNALS = [];
+let DAYS_AFTER = 0;   // 当前信号已揭晓的信号日后天数（切换信号时归零，防止串场偷看）
+let ANCHOR = 'signal';   // 光标锚点：signal=信号日（初始/切换信号）；latest=最新揭晓日（Next day 后）
+
+// ===== 训练交易状态（现金/账本/历史经 /api/state 持久化恢复，刷新页面不丢） =====
+const INIT_CASH = 100000;   // 初始资金 10 万
+let TRAINING = false;       // 训练态：true=训练中（锁定切换个股，开放交易）
+// 全局账户：跨个股、跨训练会话连续沿用（切换个股不清零），仅「重置账户」或刷新前落盘归零
+let ACCT = { cash: INIT_CASH, shares: 0, trades: [] };
+let HISTORY = {};           // 个股训练历史 { code: [{ts,start,final,trades}] }，结束训练追加
+let SESSION_START_CASH = INIT_CASH;   // 本会话起始资金（开始训练时记录，用于会话收益率）
+let SESSION_TRADES = [];    // 本会话交易明细（与全局账本同步写入，结束训练展示/落盘用）
+let LAST_RESULT = null;     // 结束训练后的会话结果摘要
+const PLOT_KEYS = ['ma7', 'zx_short_term_trend', 'zx_bull_bear_line'];  // 主图画线的指标
+// 固定面板显示值的指标（不画线）：量涨跌幅=量环比%、MA斜率=MA7较上一交易日环比%、MA7偏离度=BIAS%
+const VALUE_KEYS = [...PLOT_KEYS, 'vol_pct', 'ma7_slope', 'bias7'];
+const PCT_KEYS = ['vol_pct', 'ma7_slope', 'bias7'];  // 百分比类值，面板显示带 %
+const MA_LABEL = {
+  ma7: 'MA7',
+  zx_short_term_trend: 'ZX短线趋势',
+  zx_bull_bear_line: 'ZX牛熊线',
+  vol_pct: '量涨跌幅',
+  ma7_slope: 'MA斜率',
+  bias7: 'MA7偏离度',
+};
+const MA_STYLE = {
+  ma7:  { color: '#e64545', width: 1 },
+  zx_short_term_trend: { color: '#ffffff', width: 1.4 },
+  zx_bull_bear_line: { color: '#ffd700', width: 1.4 },
+};
+
+function fmtVol(v) {
+  if (v == null) return '-';
+  if (v >= 1e8) return (v / 1e8).toFixed(2) + '亿';
+  if (v >= 1e4) return (v / 1e4).toFixed(1) + '万';
+  return v;
+}
+
+// 固定数据面板：显示第 i 根K线的数据（十字光标联动）
+function showBar(i) {
+  const d = KDATA;
+  if (!d || i == null || i < 0 || i >= d.count) return;
+  const [o, c, l, h] = d.candle[i];
+  const prevC = i > 0 ? d.candle[i - 1][1] : d.prev_close;
+  const pct = prevC ? (c - prevC) / prevC * 100 : null;
+  const cls = c >= prevC ? 'up' : 'down';
+  const mas = VALUE_KEYS.map(k =>
+    `<span class="${k}">${MA_LABEL[k]} ${d.ma[k][i] ?? '-'}${PCT_KEYS.includes(k) ? '%' : ''}</span>`).join('　');
+  const others = d.other_signals || [];
+  let tag = '';
+  if (i === d.signal_index) tag = '　<span class="sig-tag">信号日</span>';
+  else if (others.includes(i)) tag = '　<span class="sig-tag-other">信号</span>';
+  infoPanel.innerHTML =
+    `<div><b>${d.dates[i]}</b>${tag}　<span class="${cls}">${pct == null ? '-' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%'}</span></div>` +
+    `<div>开 <span class="${prevC && o >= prevC ? 'up' : 'down'}">${o}</span>　高 ${h}　低 ${l}　收 <span class="${cls}">${c}</span></div>` +
+    `<div>量 ${fmtVol(d.volumes[i])}</div>` +
+    `<div>${mas}</div>`;
+}
+
+async function loadSignals() {
+  try {
+    const res = await fetch('/api/signals');
+    const list = await res.json();
+    if (!res.ok || !Array.isArray(list) || !list.length) {
+      msg.textContent = (list && list.error) || 'signals.csv 为空或不存在';
+      return;
+    }
+    SIGNALS = list;
+    refreshSignalOptions();
+    document.getElementById('posTotal').textContent = `/ ${SIGNALS.length}`;
+    query();
+  } catch (e) {
+    msg.textContent = '加载信号清单失败：' + e.message;
+  }
+}
+
+// 下拉选项文案：已训练个股带 ✓ 标记（一眼可辨，且不可重复训练）
+function signalLabel(s) {
+  const trained = HISTORY[s.code] && HISTORY[s.code].length;
+  return `${s.code}　${s.trade_date}${trained ? '　✓已训练' : ''}`;
+}
+
+// 重建下拉选项（保持当前选中项；训练结束/重置账户后刷新标记）
+function refreshSignalOptions() {
+  const cur = sel.value;
+  sel.innerHTML = SIGNALS.map((s, i) => `<option value="${i}">${signalLabel(s)}</option>`).join('');
+  if (cur) sel.value = cur;
+}
+
+// 全量预热：环形预取清单中所有信号（串行 + 间隔限速防封IP；已预取过的跳过）
+// 预取不带 days_after（=0），只含信号日及以前的数据，不泄露未来
+const PREFETCH_INTERVAL = 500;   // 每条预取间隔（毫秒），温和限速
+const prefetched = new Set();    // 页面生命周期内已预取的信号索引
+let prefetching = false;
+
+async function prefetchAll() {
+  if (SIGNALS.length < 2 || prefetching) return;
+  prefetching = true;
+  try {
+    for (let step = 1; step < SIGNALS.length; step++) {
+      const idx = (Number(sel.value) + step) % SIGNALS.length;
+      if (prefetched.has(idx)) continue;
+      const s = SIGNALS[idx];
+      await fetch(`/api/kline?code=${s.code}&date=${s.trade_date}`).catch(() => {});
+      prefetched.add(idx);
+      await new Promise(r => setTimeout(r, PREFETCH_INTERVAL));
+    }
+  } finally {
+    prefetching = false;
+  }
+}
+
+// 序号跳转：输入第 n 个（1 开始），clamp 到 [1, N] 后切换；非法输入回退当前序号
+function jumpTo() {
+  if (!SIGNALS.length) return;
+  const pos = document.getElementById('posNum');
+  let n = parseInt(pos.value, 10);
+  if (isNaN(n)) { pos.value = String(Number(sel.value) + 1); return; }
+  n = Math.max(1, Math.min(SIGNALS.length, n));
+  pos.value = String(n);
+  sel.value = String(n - 1);
+  DAYS_AFTER = 0;   // 切换信号重置揭晓进度
+  query();
+}
+
+// 序号框与当前信号同步（查询/切换成功后调用）
+function syncPos() {
+  document.getElementById('posNum').value = String(Number(sel.value) + 1);
+}
+
+async function query(anchor = 'signal') {
+  ANCHOR = anchor;   // 决定渲染后光标/面板锚定位置
+  const s = SIGNALS[sel.value];
+  if (!s) return;
+  const btn = document.getElementById('btn');
+  msg.textContent = '';
+  noteEl.textContent = '';
+  btn.disabled = true;
+  btn.textContent = '查询中...';
+  try {
+    const res = await fetch(`/api/kline?code=${s.code}&date=${s.trade_date}&days_after=${DAYS_AFTER}`);
+    const data = await res.json();
+    if (!res.ok) { msg.textContent = data.error || '查询失败'; chart.clear(); return; }
+    render(data);
+    msg.textContent = `${data.code} 已揭晓至 ${data.dates[data.count-1]}（共 ${data.count} 个交易日）`;
+    if (data.note) noteEl.textContent = '提示：' + data.note;
+    updateNextDayUI(data);      // 揭晓进度显示
+    updateTradeUI();            // 交易按钮状态（训练态/持仓/数据到底/已训练不可重复训练）
+    updateAccountPanel();       // 账户面板（持仓市值随最新收盘价刷新）
+    if (data.trained) {
+      noteEl.textContent = (noteEl.textContent ? noteEl.textContent + '；' : '') +
+        `该股已训练过（${(HISTORY[data.code] || []).length} 次会话），不可重复训练，信号日后数据已全量开放`;
+    }
+    if (!TRAINING) showStockHistory(data);   // 空闲态：显示该股历史训练记录（无则隐藏面板）
+    syncPos();       // 序号框跟随当前信号
+    prefetchAll();   // 当前图渲染完成后，后台串行预热全部信号数据
+  } catch (e) {
+    msg.textContent = '请求失败：' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '查询';
+  }
+}
+
+// Next day 进度显示（到达上限或数据末尾后提示；按钮启停统一由 updateTradeUI 管理）
+function updateNextDayUI(d) {
+  const done = !d.has_more_after || d.days_after >= d.max_after;
+  document.getElementById('ndProg').textContent = `信号日 +${d.days_after} / ${d.max_after}`;
+  if (done) noteEl.textContent = (noteEl.textContent ? noteEl.textContent + '；' : '') + '已到最后可揭晓交易日';
+}
+
+// ===== 训练交易 =====
+const fmtMoney = v => v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const round2 = v => Math.round(v * 100) / 100;
+
+// 切换个股类控件的锁定/解锁（训练态禁止切换：下拉/上一个/下一个/查询/序号）
+function setSwitchLock(lock) {
+  sel.disabled = lock;
+  document.getElementById('prev').disabled = lock;
+  document.getElementById('next').disabled = lock;
+  document.getElementById('btn').disabled = lock;
+  posNum.disabled = lock;
+}
+
+// 交易按钮状态：按训练态/持仓/数据到底 统一启停（含 Next day，空闲态禁用）
+function updateTradeUI() {
+  const d = KDATA;
+  const done = !d || !d.has_more_after || d.days_after >= d.max_after;
+  // 已训练个股不可重复训练：空闲态禁用「开始训练」（训练态可点=结束训练）
+  const trained = !!(d && HISTORY[d.code] && HISTORY[d.code].length);
+  document.getElementById('buyBtn').disabled = !TRAINING || done || ACCT.shares > 0;
+  document.getElementById('sellBtn').disabled = !TRAINING || ACCT.shares <= 0;
+  document.getElementById('nextDay').disabled = !TRAINING || done;
+  document.getElementById('resetBtn').disabled = TRAINING;   // 重置仅空闲态可用
+  document.getElementById('trainBtn').disabled = !TRAINING && trained;
+  document.getElementById('trainBtn').textContent = TRAINING ? '结束训练' : '开始训练';
+}
+
+// 当前成交价 = 最新揭晓日收盘价（图中最后一根K线）
+function latestClose() {
+  return KDATA ? KDATA.candle[KDATA.count - 1][1] : null;
+}
+
+// 训练开关：开始训练 / 结束训练（持仓中拒绝结束）
+function toggleTrain() {
+  if (!TRAINING) startTraining();
+  else endTraining();
+}
+
+function startTraining() {
+  TRAINING = true;
+  SESSION_START_CASH = ACCT.cash;   // 沿用全局现金，记录会话起点（不再重置10万）
+  SESSION_TRADES = [];
+  LAST_RESULT = null;
+  document.getElementById('resultPanel').style.display = 'none';
+  setSwitchLock(true);
+  DAYS_AFTER = 0;
+  query('signal');   // 重置到信号日重新开始（渲染后由 query 统一刷新按钮/账户）
+}
+
+function endTraining() {
+  if (ACCT.shares > 0) {
+    noteEl.textContent = '提示：当前持仓中，请先 Sell 清仓后再结束训练';
+    return;
+  }
+  TRAINING = false;
+  // 全局账户不清零：现金与交易记录沿用，切下一个个股继续；会话记录写入该股历史并落盘
+  const code = KDATA ? KDATA.code : '';
+  const rec = {
+    code,
+    ts: new Date().toLocaleString('zh-CN', { hour12: false }),
+    start: SESSION_START_CASH,
+    final: ACCT.cash,
+    trades: SESSION_TRADES,
+  };
+  LAST_RESULT = { code, trades: SESSION_TRADES, start: SESSION_START_CASH, final: ACCT.cash };
+  if (code) {
+    (HISTORY[code] = HISTORY[code] || []).push(rec);
+    refreshSignalOptions();   // 刷新下拉 ✓已训练 标记（此后该股不可重复训练）
+    // 落盘：追加会话记录+更新持久化现金/账本；失败仅提示（本地内存已生效，刷新后丢本次）
+    fetch('/api/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rec),
+    }).then(r => { if (!r.ok) throw new Error('bad status'); })
+      .catch(() => { msg.textContent = '训练记录保存失败（刷新页面将丢失本次会话）'; });
+  }
+  setSwitchLock(false);
+  updateTradeUI();
+  updateAccountPanel();
+  showResult();
+}
+
+// 重置账户：仅空闲态可用，现金回初始10万，清空全局/会话记录、历史与结果面板（含落盘清空）
+function resetAccount() {
+  if (TRAINING) return;
+  ACCT = { cash: INIT_CASH, shares: 0, trades: [] };
+  HISTORY = {};
+  SESSION_START_CASH = INIT_CASH;
+  SESSION_TRADES = [];
+  LAST_RESULT = null;
+  document.getElementById('resultPanel').style.display = 'none';
+  renderTradeMarks();   // 清空图上买卖点
+  refreshSignalOptions();   // 清掉下拉 ✓已训练 标记（历史已清空，可重新训练）
+  updateAccountPanel();
+  updateTradeUI();
+  fetch('/api/reset', { method: 'POST' })
+    .then(r => { if (!r.ok) throw new Error('bad status'); })
+    .catch(() => { msg.textContent = '重置请求保存失败（刷新页面将恢复旧记录）'; });
+}
+
+// Buy：以最新揭晓日收盘价整手买入（100股整数倍），余款留现金；已全仓或数据到底不可买
+function buy() {
+  if (!TRAINING || !KDATA || ACCT.shares > 0) return;
+  if (!KDATA.has_more_after || KDATA.days_after >= KDATA.max_after) return;
+  const price = latestClose();
+  const lots = Math.floor(ACCT.cash / (price * 100));
+  if (lots < 1) { msg.textContent = '现金不足一手，无法买入'; return; }
+  const shares = lots * 100;
+  const amount = round2(shares * price);
+  ACCT.cash = round2(ACCT.cash - amount);
+  ACCT.shares = shares;
+  const i = KDATA.count - 1;
+  const t = { code: KDATA.code, index: i, date: KDATA.dates[i], side: 'Buy', price, shares, amount };
+  ACCT.trades.push(t);
+  SESSION_TRADES.push(t);
+  afterTrade();
+}
+
+// Sell：以最新揭晓日收盘价全部卖出
+function sell() {
+  if (!TRAINING || !KDATA || ACCT.shares <= 0) return;
+  const price = latestClose();
+  const shares = ACCT.shares;
+  const amount = round2(shares * price);
+  ACCT.cash = round2(ACCT.cash + amount);
+  ACCT.shares = 0;
+  const i = KDATA.count - 1;
+  const t = { code: KDATA.code, index: i, date: KDATA.dates[i], side: 'Sell', price, shares, amount };
+  ACCT.trades.push(t);
+  SESSION_TRADES.push(t);
+  afterTrade();
+}
+
+// 成交后统一刷新：按钮状态/账户面板/图上买卖点
+function afterTrade() {
+  updateTradeUI();
+  updateAccountPanel();
+  renderTradeMarks();
+}
+
+// 账户面板（全局口径）：现金/持仓/总资产/累计收益率，空闲态与训练态均显示；
+// 持仓市值按最新揭晓日收盘价计，累计收益率相对初始资金（跨个股跨会话战绩）
+function updateAccountPanel() {
+  const el = document.getElementById('acctPanel');
+  if (!ACCT) { el.textContent = ''; return; }
+  const price = latestClose() || 0;
+  const total = round2(ACCT.cash + ACCT.shares * price);
+  const pct = (total / INIT_CASH - 1) * 100;
+  el.innerHTML =
+    `现金 <b>${fmtMoney(ACCT.cash)}</b>　持仓 <b>${ACCT.shares}</b> 股` +
+    `　总资产 <b>${fmtMoney(total)}</b>　` +
+    `<span class="${pct >= 0 ? 'up' : 'down'}">累计收益率 ${(pct >= 0 ? '+' : '') + pct.toFixed(2)}%</span>`;
+}
+
+// 结束训练后的会话结果：起始资金→期末资金、会话收益率、本会话交易明细（含股票代码）
+function showResult() {
+  const el = document.getElementById('resultPanel');
+  el.style.display = 'block';
+  if (!LAST_RESULT || !LAST_RESULT.trades.length) {
+    el.innerHTML =
+      `<b>会话结果</b>：本次无交易，资金 ${fmtMoney(LAST_RESULT.start)} → ${fmtMoney(LAST_RESULT.final)}` +
+      `（会话收益率 +0.00%）`;
+    return;
+  }
+  const pct = (LAST_RESULT.final / LAST_RESULT.start - 1) * 100;
+  const rows = LAST_RESULT.trades.map(t =>
+    `<tr><td>${t.code}</td><td>${t.date}</td><td class="${t.side === 'Buy' ? 'up' : 'down'}">${t.side}</td>` +
+    `<td>${t.price.toFixed(2)}</td><td>${t.shares}</td><td>${fmtMoney(t.amount)}</td></tr>`).join('');
+  el.innerHTML =
+    `<b>会话结果</b>（${LAST_RESULT.code}）　资金 ${fmtMoney(LAST_RESULT.start)} → ${fmtMoney(LAST_RESULT.final)}　` +
+    `<span class="${pct >= 0 ? 'up' : 'down'}">会话收益率 ${(pct >= 0 ? '+' : '') + pct.toFixed(2)}%</span>` +
+    `（共 ${LAST_RESULT.trades.length} 笔交易；全局账本已沿用，可切换下一个个股继续）` +
+    `<table><tr><th>代码</th><th>日期</th><th>方向</th><th>价格</th><th>股数</th><th>金额</th></tr>${rows}</table>`;
+}
+
+// 图上买卖点标注（派生自训练记录，切股回来自动恢复）：
+// 历史会话=半透明小标记，当前会话=实色大标记；仅画已揭晓范围内的点（未来点待揭晓后出现，不泄露）
+function buildTradeMarks(d) {
+  const hist = (HISTORY[d.code] || []).flatMap(s => s.trades || []).map(t => ({ ...t, cur: false }));
+  const cur = SESSION_TRADES.map(t => ({ ...t, cur: true }));
+  return [...hist, ...cur]
+    .filter(t => t.code === d.code)
+    .map(t => ({ t, i: d.dates.indexOf(t.date) }))   // date → 当前已揭晓数据中的索引
+    .filter(({ i }) => i >= 0)
+    .map(({ t, i }) => {
+      const isBuy = t.side === 'Buy';
+      return {
+        coord: [i, isBuy ? d.candle[i][2] : d.candle[i][3]],
+        symbol: 'pin',
+        symbolSize: t.cur ? 34 : 24,
+        symbolRotate: isBuy ? 180 : 0,          // B 尖朝上指向K线，S 尖朝下指向K线
+        symbolOffset: isBuy ? [0, '60%'] : [0, '-60%'],
+        itemStyle: { color: isBuy ? UP : DOWN, opacity: t.cur ? 1 : 0.55 },
+        label: { show: true, formatter: isBuy ? 'B' : 'S', color: '#fff', fontSize: t.cur ? 11 : 9 },
+      };
+    });
+}
+
+// 空闲态切回训练过的个股：结果面板显示该股全部历史训练记录（会话摘要+全部明细）
+function showStockHistory(d) {
+  const el = document.getElementById('resultPanel');
+  const sessions = HISTORY[d.code] || [];
+  if (!sessions.length) { el.style.display = 'none'; return; }
+  const sum = sessions.map((s, n) => {
+    const pct = (s.final / s.start - 1) * 100;
+    return `<tr><td>${n + 1}</td><td>${s.ts || '-'}</td>` +
+      `<td>${fmtMoney(s.start)} → ${fmtMoney(s.final)}</td>` +
+      `<td class="${pct >= 0 ? 'up' : 'down'}">${(pct >= 0 ? '+' : '') + pct.toFixed(2)}%</td>` +
+      `<td>${(s.trades || []).length}</td></tr>`;
+  }).join('');
+  const rows = sessions.flatMap(s => s.trades || []).map(t =>
+    `<tr><td>${t.date}</td><td class="${t.side === 'Buy' ? 'up' : 'down'}">${t.side}</td>` +
+    `<td>${t.price.toFixed(2)}</td><td>${t.shares}</td><td>${fmtMoney(t.amount)}</td></tr>`).join('');
+  el.innerHTML =
+    `<b>历史训练记录</b>（${d.code}，共 ${sessions.length} 次会话）` +
+    `<table><tr><th>#</th><th>时间</th><th>资金变化</th><th>收益率</th><th>笔数</th></tr>${sum}</table>` +
+    `<table><tr><th>日期</th><th>方向</th><th>价格</th><th>股数</th><th>金额</th></tr>${rows}</table>`;
+  el.style.display = 'block';
+}
+
+// 交易后仅更新 markPoint，不重渲染整图
+function renderTradeMarks() {
+  if (!KDATA) return;
+  chart.setOption({
+    series: [{ markPoint: { symbolSize: 34, data: buildTradeMarks(KDATA) } }],
+  });
+}
+
+// 揭晓下一交易日：days_after+1 重新取数（后端缓存命中，毫秒级），渲染后由后端数据更新按钮状态
+function nextDay() {
+  if (!KDATA || document.getElementById('nextDay').disabled) return;
+  DAYS_AFTER += 1;
+  query('latest');   // 揭晓后光标/面板自动对准最新揭晓日
+}
+
+// 光标锚点索引：signal=信号日；latest=最新揭晓日（数据已裁剪，最后一天即最新揭晓日）
+function anchorIndex() {
+  if (!KDATA) return null;
+  return ANCHOR === 'latest' ? KDATA.count - 1 : KDATA.signal_index;
+}
+
+// 光标定位：数据面板 + 图上可见十字光标（tooltip 透明无内容，仅十字线与轴标签，不遮挡）
+function moveCursor(i) {
+  if (i == null || i < 0) return;
+  showBar(i);
+  chart.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: i });
+}
+
+// 展示窗口设置：信号日前 n 个交易日（后 n 由 Next day 按钮控制，不提供手动输入防偷看）
+function applyView() {
+  const d = KDATA;
+  if (!d) return;
+  const b = parseInt(document.getElementById('viewBefore').value, 10);
+  const before = (isNaN(b) || b < 0) ? 200 : b;
+  const lo = Math.max(0, d.signal_index - before);
+  const hi = Math.min(d.count - 1, d.signal_index + d.days_after);
+  chart.setOption({
+    dataZoom: [
+      { type: 'inside', xAxisIndex: [0, 1], startValue: lo, endValue: hi },
+      { type: 'slider', xAxisIndex: [0, 1], startValue: lo, endValue: hi },
+    ],
+  });
+}
+
+// 信号日标注竖线：主图金色虚线，同股其它信号日灰色点线（主图/副图共用；未来信号日已由后端过滤）
+function buildVLines(d) {
+  const mk = (i, color, type, width) => ({
+    xAxis: i, label: { show: false }, lineStyle: { color, type, width },
+  });
+  return [mk(d.signal_index, SIG, 'dashed', 1.5),
+    ...(d.other_signals || []).map(i => mk(i, '#c0c4cc', 'dotted', 1))];
+}
+
+// 信号日收盘价水平参考线（仅主图）：金色虚线，右端价格标签远离K线防遮挡
+function buildHLine(d) {
+  const closePrice = d.candle[d.signal_index][1];
+  return {
+    yAxis: closePrice,
+    lineStyle: { color: SIG, type: 'dashed', width: 0.77 },
+    label: {
+      show: true, position: 'end', formatter: closePrice.toFixed(2),
+      color: '#fff', backgroundColor: SIG, padding: [1, 4], borderRadius: 2, fontSize: 11,
+    },
+  };
+}
+
+function hLineEnabled() {
+  return document.getElementById('hLineOn').checked;
+}
+
+// 主图 markLine 数据：竖线 + 开关控制的收盘价水平线
+function buildMarkData(d) {
+  return hLineEnabled() ? [...buildVLines(d), buildHLine(d)] : buildVLines(d);
+}
+
+function render(d) {
+  KDATA = d;
+  const sig = d.signal_index;
+
+  // 信号日蜡烛金色描边；其余维持红涨绿跌
+  const candleData = d.candle.map((arr, i) => i === sig
+    ? { value: arr, itemStyle: { borderColor: SIG, borderColor0: SIG, borderWidth: 2 } }
+    : arr);
+
+  // 成交量按当日涨跌着色，信号日柱体同步金色高亮
+  const volData = d.volumes.map((v, i) => ({
+    value: v,
+    itemStyle: i === sig
+      ? { color: SIG, opacity: .9 }
+      : { color: d.candle[i][1] >= d.candle[i][0] ? UP : DOWN, opacity: .85 },
+  }));
+
+  chart.setOption({
+    animation: false,
+    axisPointer: { link: [{ xAxisIndex: 'all' }], label: { backgroundColor: '#555' } },
+    // 悬浮框透明空内容：仅保留十字光标与事件驱动固定面板
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'cross' },
+      borderWidth: 0, padding: 0, backgroundColor: 'transparent',
+      formatter: () => '',
+    },
+    legend: {
+      top: 0,
+      textStyle: { color: '#ccc' },
+      data: ['K线', ...PLOT_KEYS.map(k => MA_LABEL[k])],
+    },
+    grid: [
+      { left: 60, right: 60, top: 34, height: '58%' },
+      { left: 60, right: 60, top: '74%', height: '14%' },
+    ],
+    xAxis: [
+      { type: 'category', data: d.dates, gridIndex: 0, boundaryGap: true,
+        axisLine: { lineStyle: { color: '#555' } }, axisLabel: { show: false }, axisTick: { show: false },
+        axisPointer: { show: true, label: { show: false } } },
+      { type: 'category', data: d.dates, gridIndex: 1, boundaryGap: true,
+        axisLine: { lineStyle: { color: '#555' } }, axisLabel: { color: '#aaa' },
+        axisPointer: { show: true, label: { show: false } } },
+    ],
+    yAxis: [
+      { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: '#333' } },
+        axisLabel: { color: '#aaa' },
+        axisPointer: { show: true, label: { show: true } } },
+      { gridIndex: 1, axisLabel: { color: '#aaa', formatter: v => fmtVol(v) }, splitLine: { show: false },
+        axisPointer: { show: false } },
+    ],
+    dataZoom: [
+      { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
+      { type: 'slider', xAxisIndex: [0, 1], top: '93%', height: 18, start: 0, end: 100 },
+    ],
+    series: [
+      {
+        name: 'K线', type: 'candlestick', data: candleData, xAxisIndex: 0, yAxisIndex: 0,
+        itemStyle: { color: UP, color0: DOWN, borderColor: UP, borderColor0: DOWN },
+        markLine: { symbol: 'none', silent: true, data: buildMarkData(d) },
+        markPoint: { symbolSize: 34, data: buildTradeMarks(d) },   // 买卖点 B/S 标注
+      },
+      ...PLOT_KEYS.map(k => ({
+        name: MA_LABEL[k], type: 'line', data: d.ma[k], xAxisIndex: 0, yAxisIndex: 0,
+        symbol: 'none', smooth: true,
+        lineStyle: { color: MA_STYLE[k].color, width: MA_STYLE[k].width },
+        emphasis: { disabled: true },
+      })),
+      {
+        name: '成交量', type: 'bar', data: volData, xAxisIndex: 1, yAxisIndex: 1,
+        markLine: { symbol: 'none', silent: true, data: buildVLines(d) },
+      },
+    ],
+  }, true);
+
+  applyView();                // 按展示窗口设置定位（信号日前 n / 已揭晓后 days_after）
+  moveCursor(anchorIndex());  // 光标（面板+十字线）锚定：初始/切换=信号日，Next day 后=最新揭晓日
+}
+
+// 十字光标移动 → 刷新固定面板；移出图表 → 回到锚点（初始=信号日，Next day 后=最新揭晓日）
+chart.on('updateAxisPointer', function (event) {
+  const info = event.axesInfo && event.axesInfo[0];
+  if (!info) return;
+  showBar(Math.round(info.value));
+});
+chart.getZr().on('globalout', function () {
+  moveCursor(anchorIndex());
+});
+
+// 切换信号：揭晓进度归零后查询
+sel.addEventListener('change', () => { DAYS_AFTER = 0; query(); });
+// 展示窗口前 n 修改即时重新定位（不重新取数）
+document.getElementById('viewBefore').addEventListener('change', applyView);
+// 收盘价水平线开关：仅更新主图 markLine，不重渲染、不重置缩放
+document.getElementById('hLineOn').addEventListener('change', () => {
+  const d = KDATA;
+  if (!d) return;
+  chart.setOption({
+    series: [{ markLine: { symbol: 'none', silent: true, data: buildMarkData(d) } }],
+  });
+});
+// 序号跳转：修改/回车即跳到第 n 个信号
+const posNum = document.getElementById('posNum');
+posNum.addEventListener('change', jumpTo);
+posNum.addEventListener('keydown', e => { if (e.key === 'Enter') jumpTo(); });
+document.getElementById('btn').addEventListener('click', () => { DAYS_AFTER = 0; query(); });
+// 上一个/下一个：按钮点击与键盘快捷键（q/w）共用，切换信号重置揭晓进度
+function prevSignal() {
+  if (!SIGNALS.length) return;
+  sel.value = String((Number(sel.value) - 1 + SIGNALS.length) % SIGNALS.length);
+  DAYS_AFTER = 0;
+  query();
+}
+function nextSignal() {
+  if (!SIGNALS.length) return;
+  sel.value = String((Number(sel.value) + 1) % SIGNALS.length);
+  DAYS_AFTER = 0;
+  query();
+}
+document.getElementById('prev').addEventListener('click', prevSignal);
+document.getElementById('next').addEventListener('click', nextSignal);
+document.getElementById('nextDay').addEventListener('click', nextDay);
+document.getElementById('trainBtn').addEventListener('click', toggleTrain);
+document.getElementById('resetBtn').addEventListener('click', resetAccount);
+document.getElementById('buyBtn').addEventListener('click', buy);
+document.getElementById('sellBtn').addEventListener('click', sell);
+
+// 复制当前信号代码到剪贴板：优先 clipboard API（127.0.0.1 安全上下文免授权），
+// 不可用时降级旧式 execCommand，成功后信息区短暂提示
+async function copyCode() {
+  if (!KDATA) return;
+  const code = KDATA.code;
+  let ok = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(code);
+      ok = true;
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = code;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+  } catch (e) {
+    ok = false;
+  }
+  msg.textContent = ok ? `已复制 ${code} 到剪贴板` : '复制失败';
+  setTimeout(() => { if (msg.textContent.includes('剪贴板') || msg.textContent === '复制失败') msg.textContent = ''; }, 2000);
+}
+
+// 键盘快捷键：q=上一个 w=下一个 c=复制代码 d=Next day b=Buy s=Sell；
+// 开关关闭或焦点在输入控件时忽略（避免打字误触发）；b/s 仅训练态生效（函数内部校验）
+function hotkeyEnabled() {
+  return document.getElementById('hotkeyOn').checked;
+}
+document.addEventListener('keydown', e => {
+  if (!hotkeyEnabled()) return;
+  const tag = (document.activeElement && document.activeElement.tagName) || '';
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (e.key === 'q' || e.key === 'Q') prevSignal();
+  else if (e.key === 'w' || e.key === 'W') nextSignal();
+  else if (e.key === 'c' || e.key === 'C') copyCode();
+  else if (e.key === 'd' || e.key === 'D') nextDay();
+  else if (e.key === 'b' || e.key === 'B') buy();
+  else if (e.key === 's' || e.key === 'S') sell();
+});
+
+// 初始为空闲态：交易按钮全部禁用，账户面板显示初始资金
+updateTradeUI();
+updateAccountPanel();
+
+// 启动恢复：拉取持久化的现金/账本/个股训练历史，成功后再加载信号清单（保证首屏历史可用）
+async function loadState() {
+  try {
+    const res = await fetch('/api/state');
+    const st = await res.json();
+    if (!res.ok) return;
+    if (typeof st.cash === 'number') ACCT.cash = st.cash;
+    if (Array.isArray(st.trades)) ACCT.trades = st.trades;
+    if (st.history && typeof st.history === 'object') HISTORY = st.history;
+    updateAccountPanel();
+  } catch (e) { /* 状态接口不可用时按空账户继续 */ }
+}
+
+async function init() {
+  await loadState();
+  loadSignals();
+}
+
+// 页面加载后先恢复训练状态，再拉取信号清单并默认查询第一个
+init();
+</script>
+</body>
+</html>
