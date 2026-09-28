@@ -155,7 +155,7 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       · 资金跨个股、跨会话连续沿用；「重置账户」回 10 万并清空全部记录（仅空闲态可用）<br>
       · 结束训练须先清仓；已训练个股（下拉带 ✓）不可重复训练，数据全量开放
       <b>【快捷键】</b>（跟随「快捷键」开关，焦点在输入框时无效）<br>
-      q=上一个　w=下一个　c=复制代码　d=Next day　b=Buy　s=Sell
+      q=上一个　w=下一个　c=复制代码　d=Next day　b=Buy　s=Sell　z=开始/结束训练
       <b>【图上标注】</b><br>
       金色竖线=信号日（「信号日线」开关）　金色虚线=信号日收盘价（「收盘价线」开关）<br>
       B红 / S绿=买卖点（实色大=最近会话，半透明小=更早会话）
@@ -377,9 +377,12 @@ function latestClose() {
   return KDATA ? KDATA.candle[KDATA.count - 1][1] : null;
 }
 
-// 训练开关：开始训练 / 结束训练（持仓中拒绝结束）
+// 训练开关：开始训练 / 结束训练（持仓中拒绝结束；已训练个股空闲态不可重新开始）
 function toggleTrain() {
-  if (!TRAINING) startTraining();
+  if (!TRAINING) {
+    if (document.getElementById('trainBtn').disabled) return;   // 与按钮 disabled 同源拦截（键盘 z 走此入口）
+    startTraining();
+  }
   else endTraining();
 }
 
@@ -822,7 +825,7 @@ document.getElementById('helpBtn').addEventListener('click', () => { helpModal.s
 document.getElementById('helpClose').addEventListener('click', () => { helpModal.style.display = 'none'; });
 helpModal.addEventListener('click', e => { if (e.target === helpModal) helpModal.style.display = 'none'; });
 
-// 键盘快捷键：q=上一个 w=下一个 c=复制代码 d=Next day b=Buy s=Sell；
+// 键盘快捷键：q=上一个 w=下一个 c=复制代码 d=Next day b=Buy s=Sell z=开始/结束训练；
 // 开关关闭、弹窗打开或焦点在输入控件时忽略（避免打字/看说明时误触发）；b/s 仅训练态生效
 function hotkeyEnabled() {
   return document.getElementById('hotkeyOn').checked && !helpOpen();
@@ -837,6 +840,7 @@ document.addEventListener('keydown', e => {
   else if (e.key === 'd' || e.key === 'D') nextDay();
   else if (e.key === 'b' || e.key === 'B') buy();
   else if (e.key === 's' || e.key === 'S') sell();
+  else if (e.key === 'z' || e.key === 'Z') toggleTrain();
 });
 
 // 初始为空闲态：交易按钮全部禁用，账户面板显示初始资金
