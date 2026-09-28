@@ -141,6 +141,37 @@ def get_latest_date(code: str):
     return row[0] if row and row[0] else None
 
 
+def get_earliest_date(code: str):
+    """
+    查本地最早 trade_date（起点水位）
+
+    Returns:
+        str: YYYY-MM-DD；本地无该股时返回 None
+    """
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT MIN(trade_date) FROM daily_bars WHERE code = ?", [code]
+        ).fetchone()
+    finally:
+        conn.close()
+    return row[0] if row and row[0] else None
+
+
+def _covered(latest, earliest, start, needed_end) -> bool:
+    """
+    本地数据是否完全覆盖请求区间：
+
+    - 末端覆盖：本地水位 >= needed_end
+    - 起点覆盖：请求 start 早于本地最早日期时视为缺口（此前浅回补/服务器截断遗留）
+    """
+    if latest is None or latest < needed_end:
+        return False
+    if start and (earliest is None or earliest > start):
+        return False
+    return True
+
+
 def get_daily(code: str, start: str = None, end: str = None) -> pd.DataFrame:
     """
     读取日线（透传+回写模式）：
@@ -161,14 +192,16 @@ def get_daily(code: str, start: str = None, end: str = None) -> pd.DataFrame:
     code = (code or '').strip()
     needed_end = end or datetime.now().strftime('%Y-%m-%d')
     latest = get_latest_date(code)
+    earliest = get_earliest_date(code)
 
-    # 需要回源：本地无数据，或请求末端超出本地水位
-    if (latest is None or latest < needed_end) and _allow_fallback(code):
+    # 需要回源：末端缺口（水位低于请求end）或起点缺口（请求start早于本地最早日期）
+    if not _covered(latest, earliest, start, needed_end) and _allow_fallback(code):
         try:
             with _fetch_lock:
-                # 双检：排队等锁期间数据可能已被其它请求回源完成
-                latest_in_lock = get_latest_date(code)
-                if latest_in_lock is not None and latest_in_lock >= needed_end:
+                # 双检：排队等锁期间缺口可能已被其它请求回补完成
+                latest2 = get_latest_date(code)
+                earliest2 = get_earliest_date(code)
+                if _covered(latest2, earliest2, start, needed_end):
                     return load_daily(code, start, end)
                 offset = _estimate_offset(start, latest)
                 df = _basic_bars.get_daily(code, offset)

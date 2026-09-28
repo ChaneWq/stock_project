@@ -149,8 +149,9 @@ class TdxSource:
             all_bars.extend(bars)
             remaining -= len(bars)
             start += len(bars)
-            if len(bars) < count:
-                break
+            # 返回不足时不立即结束：下一轮再探一页，
+            # 区分「上市不足」（下一页为空，自然结束）与「服务器截断」（下一页能继续补齐，
+            # 避免偶发部分响应导致本地数据起点缺口）
 
         if not all_bars:
             return pd.DataFrame()

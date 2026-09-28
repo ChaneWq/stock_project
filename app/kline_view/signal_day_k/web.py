@@ -127,7 +127,7 @@ def api_kline():
         note = f'信号日 {signal_date} 晚于最新数据 {dates[idx]}，已标注至最新交易日'
     elif dates[pos] != signal_date:
         if pos == 0:
-            return jsonify({'error': f'信号日 {signal_date} 早于数据起点 {dates[0]}（股票上市晚于信号日？）'}), 404
+            return jsonify({'error': f'信号日 {signal_date} 早于该股最早交易日 {dates[0]}（股票上市/复牌晚于信号日，无该日K线）'}), 404
         idx = pos - 1
         note = f'信号日 {signal_date} 为非交易日，已标注至前一交易日 {dates[idx]}'
     else:
