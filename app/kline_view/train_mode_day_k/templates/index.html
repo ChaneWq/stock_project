@@ -6,9 +6,20 @@
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: "Microsoft YaHei", sans-serif; background: #f5f6fa; padding: 16px; color: #333; }
-h1 { font-size: 20px; margin-bottom: 14px; }
+/* 左右分栏布局：页面整体锁定视口高度不滚动，K线常驻全貌；
+   右栏表单内容长时仅在右栏内部滚动，滚轮不影响K线 */
+body { font-family: "Microsoft YaHei", sans-serif; background: #f5f6fa; padding: 12px 16px; color: #333;
+  display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+h1 { font-size: 18px; margin-bottom: 10px; flex: none; }
+.layout { display: flex; flex: 1; min-height: 0; gap: 14px; }
+.layout .panel { margin-bottom: 0; }
 .panel { background: #fff; border-radius: 8px; padding: 14px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+/* 左栏：K线主体，吃掉剩余宽度，图表填满整栏高度（零滚动零跳动） */
+.chart-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.chart-wrap { flex: 1; min-height: 0; position: relative; }
+#chart { width: 100%; height: 100%; background: #1e1e1e; border-radius: 4px; }
+/* 右栏：表单侧栏，固定宽度，内容超出时栏内独立滚动 */
+.form-panel { width: 480px; flex: none; overflow-y: auto; }
 .form-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .form-item { display: flex; align-items: center; gap: 6px; }
 .form-item label { font-size: 13px; white-space: nowrap; }
@@ -30,8 +41,6 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
 .result table { border-collapse: collapse; margin-top: 6px; font-size: 12px; }
 .result th, .result td { border: 1px solid #e4e7ed; padding: 2px 10px; text-align: center; }
 .tip { font-size: 12px; color: #909399; }
-#chart { width: 100%; height: 640px; background: #1e1e1e; border-radius: 4px; }
-.chart-wrap { position: relative; }
 /* 左上角固定数据面板：随十字光标刷新内容，位置固定，不遮挡交互（深色底适配白色指标标签） */
 .info-panel { position: absolute; top: 6px; left: 66px; z-index: 10; pointer-events: none;
   background: rgba(24,24,24,.85); border: 1px solid #444; border-radius: 6px;
@@ -54,7 +63,16 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
 <body>
 
 <h1>日K训练模式（前200 / 逐日揭晓，防偷看未来）</h1>
-<div class="panel">
+<div class="layout">
+
+<div class="panel chart-panel">
+  <div class="chart-wrap">
+    <div id="chart"></div>
+    <div class="info-panel" id="infoPanel">加载中...</div>
+  </div>
+</div>
+
+<div class="panel form-panel">
   <div class="form-row">
     <div class="form-item">
       <label>信号</label>
@@ -97,15 +115,12 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
   <div class="result" id="resultPanel" style="display:none"></div>
 </div>
 
-<div class="panel">
-  <div class="chart-wrap">
-    <div id="chart"></div>
-    <div class="info-panel" id="infoPanel">加载中...</div>
-  </div>
 </div>
 
 <script>
 const chart = echarts.init(document.getElementById('chart'));
+// 窗口尺寸变化（含左右分栏比例调整）时图表自适应重排
+window.addEventListener('resize', () => chart.resize());
 const infoPanel = document.getElementById('infoPanel');
 const msg = document.getElementById('msg');
 const noteEl = document.getElementById('note');
@@ -460,11 +475,19 @@ function showResult() {
 }
 
 // 图上买卖点标注（派生自训练记录，切股回来自动恢复）：
-// 历史会话=半透明小标记，当前会话=实色大标记；仅画已揭晓范围内的点（未来点待揭晓后出现，不泄露）
+// 训练中=历史会话半透明小标记+当前会话实色大标记；
+// 结束训练后=最近一次会话实色大标记+更早会话半透明小标记；
+// 两数据源按训练态互斥，避免已并入 HISTORY 的会话与 SESSION_TRADES 叠加成重复标记
 function buildTradeMarks(d) {
-  const hist = (HISTORY[d.code] || []).flatMap(s => s.trades || []).map(t => ({ ...t, cur: false }));
-  const cur = SESSION_TRADES.map(t => ({ ...t, cur: true }));
-  return [...hist, ...cur]
+  const sessions = HISTORY[d.code] || [];
+  const lastSession = (!TRAINING && sessions.length) ? sessions[sessions.length - 1] : null;
+  const marks = [];
+  sessions.forEach(s => {
+    const isCur = s === lastSession;
+    (s.trades || []).forEach(t => marks.push({ ...t, cur: isCur }));
+  });
+  if (TRAINING) SESSION_TRADES.forEach(t => marks.push({ ...t, cur: true }));
+  return marks
     .filter(t => t.code === d.code)
     .map(t => ({ t, i: d.dates.indexOf(t.date) }))   // date → 当前已揭晓数据中的索引
     .filter(({ i }) => i >= 0)
