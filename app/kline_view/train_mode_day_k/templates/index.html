@@ -18,8 +18,21 @@ h1 { font-size: 18px; margin-bottom: 10px; flex: none; }
 .chart-panel { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .chart-wrap { flex: 1; min-height: 0; position: relative; }
 #chart { width: 100%; height: 100%; background: #1e1e1e; border-radius: 4px; }
-/* 右栏：表单侧栏，固定宽度，内容超出时栏内独立滚动 */
+/* 右栏：表单侧栏，固定宽度，内容超出时栏内独立滚动；多个操作行竖排留行距 */
 .form-panel { width: 480px; flex: none; overflow-y: auto; }
+.form-panel .form-row { margin-bottom: 10px; }
+.form-panel .form-row:last-of-type { margin-bottom: 0; }
+/* 使用说明弹窗：全屏遮罩 + 居中卡片，点 × 或遮罩关闭 */
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100;
+  display: flex; align-items: center; justify-content: center; }
+.modal-card { background: #fff; border-radius: 8px; width: 560px; max-width: 92vw; max-height: 82vh;
+  overflow-y: auto; padding: 18px 22px; box-shadow: 0 8px 30px rgba(0,0,0,.25); }
+.modal-head { font-size: 16px; font-weight: 600; margin-bottom: 10px;
+  display: flex; justify-content: space-between; align-items: center; }
+.modal-close { cursor: pointer; font-size: 20px; color: #909399; line-height: 1; padding: 0 4px; }
+.modal-close:hover { color: #333; }
+.modal-body { font-size: 13px; line-height: 1.9; color: #444; }
+.modal-body b { display: block; margin: 8px 0 2px; color: #222; }
 .form-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
 .form-item { display: flex; align-items: center; gap: 6px; }
 .form-item label { font-size: 13px; white-space: nowrap; }
@@ -79,42 +92,75 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       <select id="signal"></select>
     </div>
     <button id="prev">上一个</button>
+    <button id="next">下一个</button>
+  </div>
+  <div class="form-row">
     <div class="form-item">
       <label>第</label>
       <input type="number" id="posNum" min="1" style="width:60px">
       <label id="posTotal">/ -</label>
     </div>
-    <button id="next">下一个</button>
     <button id="btn">查询</button>
-    <button id="trainBtn">开始训练</button>
-    <button id="resetBtn">重置账户</button>
     <div class="form-item">
       <label>展示</label>
       <input type="number" id="viewBefore" value="200" min="0" max="200" style="width:66px">
       <label>前</label>
     </div>
-    <span class="tip">开始训练后锁定切换个股；Buy/Sell 按最新揭晓日收盘价全仓整手交易；结束训练须先清仓</span>
-    <div class="form-item">
-      <label for="hotkeyOn">快捷键</label>
-      <input type="checkbox" id="hotkeyOn" checked style="accent-color:#f5a623">
-    </div>
-    <div class="form-item">
-      <label for="hLineOn">收盘价线</label>
-      <input type="checkbox" id="hLineOn" checked style="accent-color:#f5a623">
-    </div>
+  </div>
+  <div class="form-row">
+    <button id="trainBtn">开始训练</button>
+    <button id="resetBtn">重置账户</button>
+    <button id="helpBtn">使用说明</button>
   </div>
   <div class="form-row">
     <button id="buyBtn" disabled>Buy</button>
     <button id="sellBtn" disabled>Sell</button>
     <button id="nextDay" disabled>Next day</button>
     <span class="nd-prog" id="ndProg">信号日 +0 / 20</span>
+  </div>
+  <div class="form-row">
     <span class="acct" id="acctPanel"></span>
+  </div>
+  <div class="form-row">
+    <div class="form-item">
+      <label for="hotkeyOn">快捷键</label>
+      <input type="checkbox" id="hotkeyOn" checked style="accent-color:#f5a623">
+    </div>
+    <div class="form-item">
+      <label for="vLineOn">信号日线</label>
+      <input type="checkbox" id="vLineOn" checked style="accent-color:#f5a623">
+    </div>
+    <div class="form-item">
+      <label for="hLineOn">收盘价线</label>
+      <input type="checkbox" id="hLineOn" checked style="accent-color:#f5a623">
+    </div>
   </div>
   <div class="note" id="note"></div>
   <div class="msg" id="msg"></div>
   <div class="result" id="resultPanel" style="display:none"></div>
 </div>
 
+</div>
+
+<!-- 使用说明弹窗：点击「使用说明」弹出，点 × 或遮罩关闭 -->
+<div class="modal" id="helpModal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-head">使用说明 <span class="modal-close" id="helpClose">×</span></div>
+    <div class="modal-body">
+      <b>【平台玩法】</b><br>
+      选股 → 开始训练 → 看图研判 → Buy / Sell / Next day → 清仓 → 结束训练看会话结果。<br>
+      初始只展示到信号日，点 Next day 逐日揭晓（最多 20 天），防止偷看未来数据。
+      <b>【交易规则】</b><br>
+      · 初始资金 10 万；Buy / Sell 按「最新揭晓日收盘价」全仓整手成交（100 股整数倍），不计费用<br>
+      · 资金跨个股、跨会话连续沿用；「重置账户」回 10 万并清空全部记录（仅空闲态可用）<br>
+      · 结束训练须先清仓；已训练个股（下拉带 ✓）不可重复训练，数据全量开放
+      <b>【快捷键】</b>（跟随「快捷键」开关，焦点在输入框时无效）<br>
+      q=上一个　w=下一个　c=复制代码　d=Next day　b=Buy　s=Sell
+      <b>【图上标注】</b><br>
+      金色竖线=信号日（「信号日线」开关）　金色虚线=信号日收盘价（「收盘价线」开关）<br>
+      B红 / S绿=买卖点（实色大=最近会话，半透明小=更早会话）
+    </div>
+  </div>
 </div>
 
 <script>
@@ -300,7 +346,7 @@ function updateNextDayUI(d) {
 }
 
 // ===== 训练交易 =====
-const fmtMoney = v => v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtMoney = v => Math.round(v).toLocaleString('zh-CN');   // 资金只展示整数
 const round2 = v => Math.round(v * 100) / 100;
 
 // 切换个股类控件的锁定/解锁（训练态禁止切换：下拉/上一个/下一个/查询/序号）
@@ -381,9 +427,11 @@ function endTraining() {
   showResult();
 }
 
-// 重置账户：仅空闲态可用，现金回初始10万，清空全局/会话记录、历史与结果面板（含落盘清空）
+// 重置账户：仅空闲态可用，二次确认防误触——现金回初始10万，
+// 清空全局/会话记录、历史与结果面板（含落盘清空，恢复后不可撤销）
 function resetAccount() {
   if (TRAINING) return;
+  if (!confirm('确定重置账户？将清空全部资金与训练记录（现金回10万），不可撤销。')) return;
   ACCT = { cash: INIT_CASH, shares: 0, trades: [] };
   HISTORY = {};
   SESSION_START_CASH = INIT_CASH;
@@ -571,12 +619,14 @@ function applyView() {
   });
 }
 
-// 信号日标注竖线：主图金色虚线，同股其它信号日灰色点线（主图/副图共用；未来信号日已由后端过滤）
+// 信号日标注竖线（金色 0.77 宽，可开关）：主图金色虚线，同股其它信号日灰色点线（主图/副图共用；
+// 未来信号日已由后端过滤）
 function buildVLines(d) {
+  if (!vLineEnabled()) return [];   // 「信号日线」开关关闭时不画竖线
   const mk = (i, color, type, width) => ({
     xAxis: i, label: { show: false }, lineStyle: { color, type, width },
   });
-  return [mk(d.signal_index, SIG, 'dashed', 1.5),
+  return [mk(d.signal_index, SIG, 'dashed', 0.77),
     ...(d.other_signals || []).map(i => mk(i, '#c0c4cc', 'dotted', 1))];
 }
 
@@ -595,6 +645,10 @@ function buildHLine(d) {
 
 function hLineEnabled() {
   return document.getElementById('hLineOn').checked;
+}
+
+function vLineEnabled() {
+  return document.getElementById('vLineOn').checked;
 }
 
 // 主图 markLine 数据：竖线 + 开关控制的收盘价水平线
@@ -630,7 +684,7 @@ function render(d) {
       formatter: () => '',
     },
     legend: {
-      top: 0,
+      top: 0, right: 10,
       textStyle: { color: '#ccc' },
       data: ['K线', ...PLOT_KEYS.map(k => MA_LABEL[k])],
     },
@@ -659,7 +713,7 @@ function render(d) {
     ],
     series: [
       {
-        name: 'K线', type: 'candlestick', data: candleData, xAxisIndex: 0, yAxisIndex: 0,
+        name: 'K线', type: 'candlestick', id: 'kline', data: candleData, xAxisIndex: 0, yAxisIndex: 0,
         itemStyle: { color: UP, color0: DOWN, borderColor: UP, borderColor0: DOWN },
         markLine: { symbol: 'none', silent: true, data: buildMarkData(d) },
         markPoint: { symbolSize: 34, data: buildTradeMarks(d) },   // 买卖点 B/S 标注
@@ -671,7 +725,7 @@ function render(d) {
         emphasis: { disabled: true },
       })),
       {
-        name: '成交量', type: 'bar', data: volData, xAxisIndex: 1, yAxisIndex: 1,
+        name: '成交量', type: 'bar', id: 'vol', data: volData, xAxisIndex: 1, yAxisIndex: 1,
         markLine: { symbol: 'none', silent: true, data: buildVLines(d) },
       },
     ],
@@ -695,14 +749,19 @@ chart.getZr().on('globalout', function () {
 sel.addEventListener('change', () => { DAYS_AFTER = 0; query(); });
 // 展示窗口前 n 修改即时重新定位（不重新取数）
 document.getElementById('viewBefore').addEventListener('change', applyView);
-// 收盘价水平线开关：仅更新主图 markLine，不重渲染、不重置缩放
-document.getElementById('hLineOn').addEventListener('change', () => {
+// 信号日线/收盘价线开关：按 series id 定向更新主图与副图 markLine，不重渲染、不重置缩放
+function updateMarkLines() {
   const d = KDATA;
   if (!d) return;
   chart.setOption({
-    series: [{ markLine: { symbol: 'none', silent: true, data: buildMarkData(d) } }],
+    series: [
+      { id: 'kline', markLine: { symbol: 'none', silent: true, data: buildMarkData(d) } },
+      { id: 'vol', markLine: { symbol: 'none', silent: true, data: buildVLines(d) } },
+    ],
   });
-});
+}
+document.getElementById('hLineOn').addEventListener('change', updateMarkLines);
+document.getElementById('vLineOn').addEventListener('change', updateMarkLines);
 // 序号跳转：修改/回车即跳到第 n 个信号
 const posNum = document.getElementById('posNum');
 posNum.addEventListener('change', jumpTo);
@@ -756,10 +815,17 @@ async function copyCode() {
   setTimeout(() => { if (msg.textContent.includes('剪贴板') || msg.textContent === '复制失败') msg.textContent = ''; }, 2000);
 }
 
+// 使用说明弹窗：点按钮弹出，点 × 或遮罩空白处关闭
+const helpModal = document.getElementById('helpModal');
+function helpOpen() { return helpModal.style.display !== 'none'; }
+document.getElementById('helpBtn').addEventListener('click', () => { helpModal.style.display = 'flex'; });
+document.getElementById('helpClose').addEventListener('click', () => { helpModal.style.display = 'none'; });
+helpModal.addEventListener('click', e => { if (e.target === helpModal) helpModal.style.display = 'none'; });
+
 // 键盘快捷键：q=上一个 w=下一个 c=复制代码 d=Next day b=Buy s=Sell；
-// 开关关闭或焦点在输入控件时忽略（避免打字误触发）；b/s 仅训练态生效（函数内部校验）
+// 开关关闭、弹窗打开或焦点在输入控件时忽略（避免打字/看说明时误触发）；b/s 仅训练态生效
 function hotkeyEnabled() {
-  return document.getElementById('hotkeyOn').checked;
+  return document.getElementById('hotkeyOn').checked && !helpOpen();
 }
 document.addEventListener('keydown', e => {
   if (!hotkeyEnabled()) return;
