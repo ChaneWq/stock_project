@@ -1035,6 +1035,8 @@ async function openStats() {
         ${statsCard('训练股票数', s.stocks_trained)}
         ${statsCard('平均盈利', fmtPnl(s.avg_win), 'up')}
         ${statsCard('平均亏损', fmtPnl(-s.avg_loss), 'down')}
+        ${statsCard('平均盈利幅度', (s.avg_win_pct > 0 ? '+' : '') + s.avg_win_pct + '%', 'up')}
+        ${statsCard('平均亏损幅度', s.avg_loss_pct + '%', 'down')}
         ${statsCard('最佳/最差单笔', best + ' / ' + worst)}
       </div>
       <div class="stats-sec">按日盈亏（柱=当日平仓盈亏，线=累计收益）</div>

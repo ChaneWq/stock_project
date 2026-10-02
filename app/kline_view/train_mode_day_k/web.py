@@ -217,6 +217,9 @@ def api_stats():
         'win_rate': round(len(wins) / len(pairs) * 100, 1) if pairs else 0,
         'avg_win': round(total_win / len(wins), 2) if wins else 0,
         'avg_loss': round(total_loss / len(losses), 2) if losses else 0,
+        # 单笔收益率口径的平均幅度（与金额口径 avg_win/avg_loss 对应，亏损为负值）
+        'avg_win_pct': round(sum(p['pnl_pct'] for p in wins) / len(wins), 2) if wins else 0,
+        'avg_loss_pct': round(sum(p['pnl_pct'] for p in losses) / len(losses), 2) if losses else 0,
         'pl_ratio': round(total_win / total_loss, 2) if total_loss > 0 else None,
         'avg_hold': avg_hold,
         'stocks_trained': len(stock_map),
