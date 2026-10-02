@@ -137,6 +137,7 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       <input type="number" id="viewBefore" value="200" min="0" max="200" style="width:66px">
       <label>前</label>
     </div>
+    <button id="lastTrainBtn" title="跳转到最近一次训练的信号">上次训练</button>
   </div>
   <div class="form-row">
     <button id="trainBtn">开始训练</button>
@@ -329,6 +330,30 @@ async function prefetchAll() {
   }
 }
 
+// 跳转到最近一次训练的信号：跨股票取全局时间戳最新的会话，省去在长清单里翻找；
+// 新记录按 signal_date 精确匹配，旧记录（无该字段）用会话最后成交日往前取该股最近信号
+function jumpToLastTrained() {
+  let best = null;   // { code, date, sess, t }
+  for (const [code, sessions] of Object.entries(HISTORY)) {
+    const s = sessions[sessions.length - 1];   // 该股最近一次会话
+    const t = Date.parse((s.ts || '').replace(/\//g, '-')) || 0;
+    if (!best || t > best.t) best = { code, date: s.signal_date || '', sess: s, t };
+  }
+  if (!best) { msg.textContent = '暂无训练记录'; return; }
+  const idxs = SIGNALS.map((s, i) => (s.code === best.code ? i : -1)).filter(i => i >= 0);
+  if (!idxs.length) { msg.textContent = `代码 ${best.code} 不在信号清单中（signals.csv 已变更？）`; return; }
+  let pick = best.date ? idxs.find(i => SIGNALS[i].trade_date === best.date) : null;
+  if (pick == null) {
+    const trades = best.sess.trades || [];
+    const lastDate = trades.length ? trades[trades.length - 1].date : '';
+    const before = lastDate ? idxs.filter(i => SIGNALS[i].trade_date <= lastDate) : [];
+    pick = before.length ? before[before.length - 1] : idxs[0];
+  }
+  sel.value = String(pick);
+  DAYS_AFTER = 0;
+  query('signal');
+}
+
 // 序号跳转：输入第 n 个（1 开始），clamp 到 [1, N] 后切换；非法输入回退当前序号
 function jumpTo() {
   if (!SIGNALS.length) return;
@@ -410,6 +435,7 @@ function updateTradeUI() {
   const done = !d || !d.has_more_after || d.days_after >= d.max_after;
   // 已训练信号不可重复训练：空闲态禁用「开始训练」（训练态可点=结束训练）
   const trained = !!(d && isTrained(d.code, d.signal_date));
+  document.getElementById('lastTrainBtn').disabled = TRAINING || !Object.keys(HISTORY).length;
   document.getElementById('buyBtn').disabled = !TRAINING || done || ACCT.shares > 0;
   document.getElementById('sellBtn').disabled = !TRAINING || ACCT.shares <= 0;
   document.getElementById('nextDay').disabled = !TRAINING || done;
@@ -832,6 +858,7 @@ function nextSignal() {
 }
 document.getElementById('prev').addEventListener('click', prevSignal);
 document.getElementById('next').addEventListener('click', nextSignal);
+document.getElementById('lastTrainBtn').addEventListener('click', jumpToLastTrained);
 document.getElementById('nextDay').addEventListener('click', nextDay);
 document.getElementById('trainBtn').addEventListener('click', toggleTrain);
 document.getElementById('resetBtn').addEventListener('click', resetAccount);
@@ -986,6 +1013,9 @@ function renderRvTable() {
     `<td>${x.win_rate}%</td><td>${pnlCell(x.pnl)}</td>` +
     `<td class="${pnlCls(x.pct || 0)}">${x.pct == null ? '-' : (x.pct > 0 ? '+' : '') + x.pct}%</td>` +
     `<td>${x.avg_hold}日</td></tr>`).join('');
+  // 明细表同步描边当前回看个股的全部行（重开面板/排序/过滤/跳转统一在此维护）
+  document.querySelectorAll('#rvDetailBody tr[data-code]').forEach(tr =>
+    tr.classList.toggle('rv-cur', tr.dataset.code === RV.cur));
 }
 
 // 行点击跳转：空闲态关闭弹层，主页面定位该股信号并查询（K线/B/S买卖点/历史记录全部复用现有渲染）
@@ -999,7 +1029,7 @@ function jumpToStock(code, buyDate) {
   const before = buyDate ? idxs.filter(i => SIGNALS[i].trade_date <= buyDate) : [];
   const pick = before.length ? before[before.length - 1] : idxs[0];
   RV.cur = code;   // 面板中当前回看个股金色描边；面板保持打开，K线在左侧直接切换
-  renderRvTable(); // 立即重渲染，选中行描边马上可见
+  renderRvTable(); // 立即重渲染，汇总+明细的当前股描边马上可见
   sel.value = String(pick);
   DAYS_AFTER = 0;
   query('signal');
@@ -1068,10 +1098,12 @@ async function openStats() {
         </tr></thead>
         <tbody id="rvBody"></tbody>
       </table>
-      <div class="stats-sec">每笔明细（点击行回看该股K线）</div>
+      <div class="stats-sec">每笔明细（点击行回看该股K线，当前回看个股整行描边）</div>
       <table class="stats-table">
+        <tbody id="rvDetailBody">
         <tr><th>代码</th><th>买入日/价</th><th>卖出日/价</th><th>持有</th><th>盈亏</th><th>收益率</th></tr>
         ${s.details.map(p => `<tr class="rv-row" data-code="${p.code}" data-buy="${p.buy_date}"><td>${p.code}</td><td>${p.buy_date} / ${p.buy_price}</td><td>${p.sell_date} / ${p.sell_price}</td><td>${p.hold}日</td><td>${pnlCell(p.pnl)}</td><td class="${pnlCls(p.pnl_pct)}">${p.pnl_pct > 0 ? '+' : ''}${p.pnl_pct}%</td></tr>`).join('')}
+        </tbody>
       </table>`;
     statsBody.innerHTML = html;
     // 各股首笔买入日：同股多信号日时跳转锚点选取用
@@ -1148,6 +1180,7 @@ async function loadState() {
     if (Array.isArray(st.trades)) ACCT.trades = st.trades;
     if (st.history && typeof st.history === 'object') HISTORY = st.history;
     updateAccountPanel();
+    updateTradeUI();   // 恢复历史后刷新「上次训练」按钮可用状态
   } catch (e) { /* 状态接口不可用时按空账户继续 */ }
 }
 
