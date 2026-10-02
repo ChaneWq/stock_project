@@ -287,8 +287,17 @@ async function loadSignals() {
 }
 
 // 下拉选项文案：已训练个股带 ✓ 标记（一眼可辨，且不可重复训练）
+// (code, 信号日) 维度已训练判定：同一股票的第二次信号不受第一次训练影响；
+// 旧记录（会话无 signal_date）与后端 _signal_trained 同源回退：全为旧记录视为已训练
+function isTrained(code, date) {
+  const sessions = HISTORY[code] || [];
+  if (!sessions.length) return false;
+  if (sessions.some(s => s.signal_date === date)) return true;
+  return sessions.every(s => !s.signal_date);
+}
+
 function signalLabel(s) {
-  const trained = HISTORY[s.code] && HISTORY[s.code].length;
+  const trained = isTrained(s.code, s.trade_date);
   return `${s.code}　${s.trade_date}${trained ? '　✓已训练' : ''}`;
 }
 
@@ -360,8 +369,11 @@ async function query(anchor = 'signal') {
     updateTradeUI();            // 交易按钮状态（训练态/持仓/数据到底/已训练不可重复训练）
     updateAccountPanel();       // 账户面板（持仓市值随最新收盘价刷新）
     if (data.trained) {
+      // 后端已按 (code, 信号日) 判定；会话数取匹配当前信号日的（兼容旧记录计入无标记会话）
+      const n = (HISTORY[data.code] || [])
+        .filter(s => !s.signal_date || s.signal_date === data.signal_date).length;
       noteEl.textContent = (noteEl.textContent ? noteEl.textContent + '；' : '') +
-        `该股已训练过（${(HISTORY[data.code] || []).length} 次会话），不可重复训练，信号日后数据已全量开放`;
+        `该信号已训练过（${n} 次会话），不可重复训练，信号日后数据已全量开放`;
     }
     if (!TRAINING) showStockHistory(data);   // 空闲态：显示该股历史训练记录（无则隐藏面板）
     syncPos();       // 序号框跟随当前信号
@@ -398,8 +410,8 @@ function setSwitchLock(lock) {
 function updateTradeUI() {
   const d = KDATA;
   const done = !d || !d.has_more_after || d.days_after >= d.max_after;
-  // 已训练个股不可重复训练：空闲态禁用「开始训练」（训练态可点=结束训练）
-  const trained = !!(d && HISTORY[d.code] && HISTORY[d.code].length);
+  // 已训练信号不可重复训练：空闲态禁用「开始训练」（训练态可点=结束训练）
+  const trained = !!(d && isTrained(d.code, d.signal_date));
   document.getElementById('buyBtn').disabled = !TRAINING || done || ACCT.shares > 0;
   document.getElementById('sellBtn').disabled = !TRAINING || ACCT.shares <= 0;
   document.getElementById('nextDay').disabled = !TRAINING || done;
@@ -443,6 +455,7 @@ function endTraining() {
   const code = KDATA ? KDATA.code : '';
   const rec = {
     code,
+    signal_date: KDATA ? KDATA.signal_date : '',   // 信号日入会话记录：(code,信号日) 维度判定已训练
     ts: new Date().toLocaleString('zh-CN', { hour12: false }),
     start: SESSION_START_CASH,
     final: ACCT.cash,

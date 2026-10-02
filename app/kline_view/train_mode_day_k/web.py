@@ -247,6 +247,7 @@ def api_session():
         return jsonify({'error': 'code/trades 缺失或非法'}), 400
     _STATE.setdefault('history', {}).setdefault(code, []).append({
         'ts': str(data.get('ts') or ''),
+        'signal_date': str(data.get('signal_date') or ''),
         'start': start,
         'final': final,
         'trades': trades,
@@ -269,6 +270,21 @@ def api_reset():
     except Exception as e:
         return jsonify({'error': f'保存重置状态失败：{e}'}), 500
     return jsonify({'ok': True})
+
+
+def _signal_trained(code, signal_date):
+    """(code, 信号日) 维度已训练判定：同一股票的第二次信号不受第一次训练影响。
+
+    旧数据兼容：train_history.json 中无 signal_date 字段的旧会话无法区分训练的是
+    哪个信号，若该股全部会话均为旧记录则保守回退 code 级判定（视为已训练防偷看）；
+    混合场景（新旧并存）按新记录精确匹配，缺匹配视为未训练（安全方向=继续裁剪）。
+    """
+    sessions = _STATE.get('history', {}).get(code) or []
+    if not sessions:
+        return False
+    if any(s.get('signal_date') == signal_date for s in sessions):
+        return True
+    return all(not s.get('signal_date') for s in sessions)
 
 
 @app.route('/api/kline')
@@ -298,8 +314,8 @@ def api_kline():
         days_after = 0
     days_after = max(0, min(AFTER, days_after))
 
-    # 已训练个股全量开放（防偷看仅对未训练个股生效；判定以持久化历史为准，前端无法绕过）
-    trained = bool(_STATE.get('history', {}).get(code))
+    # 已训练信号全量开放（防偷看仅对未训练信号生效；判定以持久化历史为准，前端无法绕过）
+    trained = _signal_trained(code, signal_date)
     if trained:
         days_after = AFTER
 
