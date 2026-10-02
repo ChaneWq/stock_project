@@ -20,7 +20,7 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
 .chart-wrap { position: relative; }
 /* 左上角固定数据面板：随十字光标刷新内容，位置固定，不遮挡交互（深色底适配白色指标标签） */
 .info-panel { position: absolute; top: 6px; left: 66px; z-index: 10; pointer-events: none;
-  background: rgba(24,24,24,.85); border: 1px solid #444; border-radius: 6px;
+  background: rgba(24,24,24,.55); border: 1px solid rgba(68,68,68,.6); border-radius: 6px;
   padding: 5px 12px; font-size: 12px; line-height: 1.8; color: #ccc; }
 .up { color: #e64545; }
 .down { color: #1dbf74; }
@@ -64,6 +64,10 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
     <div class="form-item">
       <label for="hotkeyOn">快捷键</label>
       <input type="checkbox" id="hotkeyOn" checked style="accent-color:#f5a623">
+    </div>
+    <div class="form-item">
+      <label for="vLineOn">信号日线</label>
+      <input type="checkbox" id="vLineOn" checked style="accent-color:#f5a623">
     </div>
     <div class="form-item">
       <label for="hLineOn">收盘价线</label>
@@ -131,9 +135,7 @@ function showBar(i) {
   if (i === d.signal_index) tag = '　<span class="sig-tag">信号日</span>';
   else if (others.includes(i)) tag = '　<span class="sig-tag-other">信号</span>';
   infoPanel.innerHTML =
-    `<div><b>${d.dates[i]}</b>${tag}　<span class="${cls}">${pct == null ? '-' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%'}</span></div>` +
-    `<div>开 <span class="${prevC && o >= prevC ? 'up' : 'down'}">${o}</span>　高 ${h}　低 ${l}　收 <span class="${cls}">${c}</span></div>` +
-    `<div>量 ${fmtVol(d.volumes[i])}</div>` +
+    `<div><b>${d.dates[i]}</b>${tag}　<span class="${cls}">${pct == null ? '-' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%'}</span>　开 <span class="${prevC && o >= prevC ? 'up' : 'down'}">${o}</span>　高 ${h}　低 ${l}　收 <span class="${cls}">${c}</span>　量 ${fmtVol(d.volumes[i])}</div>` +
     `<div>${mas}</div>`;
 }
 
@@ -244,12 +246,13 @@ function applyView() {
   });
 }
 
-// 信号日标注竖线：主图金色虚线，同股其它信号日灰色点线（主图/副图共用）
+// 信号日标注竖线（金色 0.77 宽，可开关）：主图金色虚线，同股其它信号日灰色点线（主图/副图共用）
 function buildVLines(d) {
+  if (!vLineEnabled()) return [];   // 「信号日线」开关关闭时不画竖线
   const mk = (i, color, type, width) => ({
     xAxis: i, label: { show: false }, lineStyle: { color, type, width },
   });
-  return [mk(d.signal_index, SIG, 'dashed', 1.5),
+  return [mk(d.signal_index, SIG, 'dashed', 0.77),
     ...(d.other_signals || []).map(i => mk(i, '#c0c4cc', 'dotted', 1))];
 }
 
@@ -268,6 +271,10 @@ function buildHLine(d) {
 
 function hLineEnabled() {
   return document.getElementById('hLineOn').checked;
+}
+
+function vLineEnabled() {
+  return document.getElementById('vLineOn').checked;
 }
 
 // 主图 markLine 数据：竖线 + 开关控制的收盘价水平线
@@ -332,7 +339,7 @@ function render(d) {
     ],
     series: [
       {
-        name: 'K线', type: 'candlestick', data: candleData, xAxisIndex: 0, yAxisIndex: 0,
+        name: 'K线', id: 'kline', type: 'candlestick', data: candleData, xAxisIndex: 0, yAxisIndex: 0,
         itemStyle: { color: UP, color0: DOWN, borderColor: UP, borderColor0: DOWN },
         markLine: { symbol: 'none', silent: true, data: buildMarkData(d) },
       },
@@ -343,7 +350,7 @@ function render(d) {
         emphasis: { disabled: true },
       })),
       {
-        name: '成交量', type: 'bar', data: volData, xAxisIndex: 1, yAxisIndex: 1,
+        name: '成交量', id: 'vol', type: 'bar', data: volData, xAxisIndex: 1, yAxisIndex: 1,
         markLine: { symbol: 'none', silent: true, data: buildVLines(d) },
       },
     ],
@@ -367,14 +374,19 @@ sel.addEventListener('change', query);
 // 展示窗口前 n/后 n 修改即时重新定位（不重新取数）
 document.getElementById('viewBefore').addEventListener('change', applyView);
 document.getElementById('viewAfter').addEventListener('change', applyView);
-// 收盘价水平线开关：仅更新主图 markLine，不重渲染、不重置缩放
-document.getElementById('hLineOn').addEventListener('change', () => {
+// 信号日线/收盘价线开关：按 series id 定向更新主图与副图 markLine，不重渲染、不重置缩放
+function updateMarkLines() {
   const d = KDATA;
   if (!d) return;
   chart.setOption({
-    series: [{ markLine: { symbol: 'none', silent: true, data: buildMarkData(d) } }],
+    series: [
+      { id: 'kline', markLine: { symbol: 'none', silent: true, data: buildMarkData(d) } },
+      { id: 'vol', markLine: { symbol: 'none', silent: true, data: buildVLines(d) } },
+    ],
   });
-});
+}
+document.getElementById('hLineOn').addEventListener('change', updateMarkLines);
+document.getElementById('vLineOn').addEventListener('change', updateMarkLines);
 // 序号跳转：修改/回车即跳到第 n 个信号
 const posNum = document.getElementById('posNum');
 posNum.addEventListener('change', jumpTo);
