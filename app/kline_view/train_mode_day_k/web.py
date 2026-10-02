@@ -15,6 +15,7 @@
     GET  /api/signals  信号清单（读 signals.csv，保持文件顺序）
     GET  /api/kline    查询参数：code + date（信号日 YYYY-MM-DD）+ days_after（已揭晓天数，默认0）
     GET  /api/state    训练账户与历史（启动恢复：现金/全局账本/个股会话历史）
+    GET  /api/stats    训练成绩统计（总览卡片/按日盈亏/按股票汇总/每笔明细）
     POST /api/session  结束训练上报：{code,start,final,ts,trades} 追加会话记录并更新现金账本
     POST /api/reset    重置账户：现金回初始、清空账本与历史
 """
@@ -124,6 +125,108 @@ def api_signals():
 def api_state():
     """训练账户与历史：页面启动时恢复（现金/全局账本/个股会话历史）"""
     return jsonify(_STATE)
+
+
+@app.route('/api/stats')
+def api_stats():
+    """训练成绩统计：遍历全局账本 Buy→Sell 配对（会话必清仓，配对可靠），未平仓不计入"""
+    trades = _STATE.get('trades') or []
+    cash = float(_STATE.get('cash', INIT_CASH))
+
+    pairs = []  # 每笔完成交易：{code, buy_date, buy_price, sell_date, sell_price, shares, pnl, pnl_pct, hold}
+    buy = None
+    for t in trades:
+        if t.get('side') == 'Buy':
+            buy = t  # 全仓买卖，同时只会有一笔持仓
+        elif t.get('side') == 'Sell' and buy:
+            amount_diff = round(float(t['amount']) - float(buy['amount']), 2)
+            pnl_pct = round(amount_diff / float(buy['amount']) * 100, 2)
+            pairs.append({
+                'code': t.get('code') or buy.get('code') or '',
+                'buy_date': buy['date'], 'buy_price': buy['price'],
+                'sell_date': t['date'], 'sell_price': t['price'],
+                'shares': t['shares'],
+                'pnl': amount_diff, 'pnl_pct': pnl_pct,
+                'hold': int(t.get('index', 0)) - int(buy.get('index', 0)),
+            })
+            buy = None
+
+    wins = [p for p in pairs if p['pnl'] > 0]
+    losses = [p for p in pairs if p['pnl'] < 0]
+    total_win = round(sum(p['pnl'] for p in wins), 2)
+    total_loss = round(-sum(p['pnl'] for p in losses), 2)
+    avg_hold = round(sum(p['hold'] for p in pairs) / len(pairs), 1) if pairs else 0
+
+    # 按日期盈亏：盈亏归属 Sell 平仓日，同日多股合并，累计自首笔平仓日起
+    daily_map = {}
+    for p in pairs:
+        d = daily_map.setdefault(p['sell_date'], {'count': 0, 'pnl': 0.0})
+        d['count'] += 1
+        d['pnl'] = round(d['pnl'] + p['pnl'], 2)
+    daily, cum = [], 0.0
+    for date in sorted(daily_map):
+        cum = round(cum + daily_map[date]['pnl'], 2)
+        daily.append({'date': date, 'count': daily_map[date]['count'],
+                      'pnl': daily_map[date]['pnl'], 'cum': cum})
+
+    # 按月盈亏幅度：当月平仓盈亏 / 月初总资产（初始资金+此前累计盈亏），复用日度聚合
+    month_map = {}
+    for d in daily:
+        m = month_map.setdefault(d['date'][:7], {'count': 0, 'pnl': 0.0})
+        m['count'] += d['count']
+        m['pnl'] = round(m['pnl'] + d['pnl'], 2)
+    monthly, mcum = [], 0.0
+    for month in sorted(month_map):
+        base = INIT_CASH + mcum  # 月初总资产
+        mcum = round(mcum + month_map[month]['pnl'], 2)
+        monthly.append({
+            'month': month,
+            'count': month_map[month]['count'],
+            'pnl': month_map[month]['pnl'],
+            'pct': round(month_map[month]['pnl'] / base * 100, 2) if base > 0 else None,
+            'cum_pct': round(mcum / INIT_CASH * 100, 2),
+        })
+
+    # 按股票汇总（含资金加权收益率/胜率/平均持有，供前端交易个股表排序回看）
+    stock_map = {}
+    for p in pairs:
+        s = stock_map.setdefault(p['code'], {'count': 0, 'wins': 0, 'pnl': 0.0,
+                                             'amount': 0.0, 'hold': 0})
+        s['count'] += 1
+        if p['pnl'] > 0:
+            s['wins'] += 1
+        s['pnl'] = round(s['pnl'] + p['pnl'], 2)
+        s['amount'] += p['shares'] * p['buy_price']
+        s['hold'] += p['hold']
+    stocks = [{'code': c, 'count': s['count'], 'wins': s['wins'],
+               'losses': s['count'] - s['wins'],
+               'win_rate': round(s['wins'] / s['count'] * 100, 1),
+               'pnl': s['pnl'],
+               'pct': round(s['pnl'] / s['amount'] * 100, 2) if s['amount'] > 0 else None,
+               'avg_hold': round(s['hold'] / s['count'], 1)}
+              for c, s in sorted(stock_map.items(), key=lambda kv: -kv[1]['pnl'])]
+
+    total_pnl = round(cash - INIT_CASH, 2)
+    return jsonify({
+        'init_cash': INIT_CASH,
+        'cash': round(cash, 2),
+        'total_pnl': total_pnl,
+        'total_pct': round(total_pnl / INIT_CASH * 100, 2),
+        'count': len(pairs),
+        'wins': len(wins), 'losses': len(losses),
+        'win_rate': round(len(wins) / len(pairs) * 100, 1) if pairs else 0,
+        'avg_win': round(total_win / len(wins), 2) if wins else 0,
+        'avg_loss': round(total_loss / len(losses), 2) if losses else 0,
+        'pl_ratio': round(total_win / total_loss, 2) if total_loss > 0 else None,
+        'avg_hold': avg_hold,
+        'stocks_trained': len(stock_map),
+        'best': max(pairs, key=lambda p: p['pnl_pct']) if pairs else None,
+        'worst': min(pairs, key=lambda p: p['pnl_pct']) if pairs else None,
+        'daily': daily,
+        'monthly': monthly,
+        'stocks': stocks,
+        'details': pairs,
+    })
 
 
 @app.route('/api/session', methods=['POST'])

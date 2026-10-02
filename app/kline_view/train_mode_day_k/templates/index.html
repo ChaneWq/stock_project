@@ -53,6 +53,37 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
 .result { margin-top: 8px; font-size: 13px; line-height: 1.8; }
 .result table { border-collapse: collapse; margin-top: 6px; font-size: 12px; }
 .result th, .result td { border: 1px solid #e4e7ed; padding: 2px 10px; text-align: center; }
+/* 成绩统计弹层：指标卡片网格 + 分节标题 + 图表容器 */
+.stats-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 8px 0; }
+.stats-card { background: #f5f6fa; border-radius: 6px; padding: 8px 10px; }
+.stats-card .k { font-size: 11px; color: #909399; }
+.stats-card .v { font-size: 15px; font-weight: 600; margin-top: 2px; }
+.stats-sec { font-size: 13px; font-weight: 600; color: #222; margin: 14px 0 6px; }
+#statsChart, #statsMonthChart { width: 100%; height: 240px; }
+.stats-table { border-collapse: collapse; font-size: 12px; width: 100%; }
+.stats-table th, .stats-table td { border: 1px solid #e4e7ed; padding: 2px 8px; text-align: center; }
+/* 交易个股回看表：表头可点排序、行可点跳转、大亏大赚底色高亮（红盈绿亏） */
+.stats-table th[data-k] { cursor: pointer; user-select: none; white-space: nowrap; }
+.rv-row { cursor: pointer; }
+.rv-row:hover { background: #f0f2f5; }
+.rv-great { background: rgba(230, 69, 69, .10); }
+.rv-bad { background: rgba(29, 191, 116, .10); }
+.rv-bar { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
+.rv-bar input { flex: 0 0 160px; padding: 4px 8px; border: 1px solid #dcdfe6; border-radius: 4px; font-size: 12px; }
+.rv-hint { color: #e6a23c; font-size: 12px; }
+/* 成绩统计侧面板：固定覆盖右侧表单区（K线常驻可见不遮盖），身体内部滚动、卡片拆2列；
+   位置由 JS 对齐 .form-panel 实际矩形（border-box 保证宽高完全重合） */
+.stats-panel { position: fixed; z-index: 90; background: #fff; border: 1px solid #e4e7ed; border-radius: 8px;
+  box-shadow: 0 4px 24px rgba(0,0,0,.18); box-sizing: border-box;
+  display: flex; flex-direction: column; padding: 12px 14px; }
+.sp-head { font-size: 15px; font-weight: 600; display: flex; justify-content: space-between;
+  align-items: center; margin-bottom: 6px; flex: none; }
+.sp-body { flex: 1; min-height: 0; overflow-y: auto; font-size: 13px; line-height: 1.9; color: #444; }
+.sp-body b { display: block; margin: 8px 0 2px; color: #222; }
+.sp-body .stats-cards { grid-template-columns: repeat(2, 1fr); }
+/* 面板中当前正在查看的个股行：金色描边（叠于大亏大赚底色之上） */
+.rv-cur { outline: 2px solid #f5a623; outline-offset: -2px; }
+.stats-empty { color: #909399; padding: 18px 0; text-align: center; }
 .tip { font-size: 12px; color: #909399; }
 /* 左上角固定数据面板：随十字光标刷新内容，位置固定，不遮挡交互（深色底适配白色指标标签） */
 .info-panel { position: absolute; top: 6px; left: 66px; z-index: 10; pointer-events: none;
@@ -110,6 +141,7 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
   <div class="form-row">
     <button id="trainBtn">开始训练</button>
     <button id="resetBtn">重置账户</button>
+    <button id="statsBtn">成绩统计</button>
     <button id="helpBtn">使用说明</button>
   </div>
   <div class="form-row">
@@ -163,10 +195,14 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
   </div>
 </div>
 
+<!-- 成绩统计侧面板：固定覆盖右侧表单区（K线常驻可见不遮盖），个股表点行切股不关面板 -->
+<div class="stats-panel" id="statsPanel" style="display:none">
+  <div class="sp-head">训练成绩统计 <span class="modal-close" id="statsClose">×</span></div>
+  <div class="sp-body" id="statsBody">加载中...</div>
+</div>
+
 <script>
 const chart = echarts.init(document.getElementById('chart'));
-// 窗口尺寸变化（含左右分栏比例调整）时图表自适应重排
-window.addEventListener('resize', () => chart.resize());
 const infoPanel = document.getElementById('infoPanel');
 const msg = document.getElementById('msg');
 const noteEl = document.getElementById('note');
@@ -820,13 +856,255 @@ async function copyCode() {
 
 // 使用说明弹窗：点按钮弹出，点 × 或遮罩空白处关闭
 const helpModal = document.getElementById('helpModal');
-function helpOpen() { return helpModal.style.display !== 'none'; }
+const statsPanel = document.getElementById('statsPanel');
+function helpOpen() { return helpModal.style.display !== 'none' || statsPanel.style.display !== 'none'; }
 document.getElementById('helpBtn').addEventListener('click', () => { helpModal.style.display = 'flex'; });
 document.getElementById('helpClose').addEventListener('click', () => { helpModal.style.display = 'none'; });
 helpModal.addEventListener('click', e => { if (e.target === helpModal) helpModal.style.display = 'none'; });
 
+// ===== 成绩统计弹层：打开时拉 /api/stats 渲染（卡片 + 按日盈亏图表 + 按股票 + 明细） =====
+const statsBody = document.getElementById('statsBody');
+let statsChart = null;
+let monthChart = null;
+
+function fmtPnl(v) {
+  if (v == null) return '-';
+  const sign = v > 0 ? '+' : '';
+  return sign + v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function pnlCls(v) { return v > 0 ? 'up' : (v < 0 ? 'down' : ''); }
+function pnlCell(v) { return `<span class="${pnlCls(v)}">${fmtPnl(v)}</span>`; }
+
+function statsCard(k, v, cls) {
+  return `<div class="stats-card"><div class="k">${k}</div><div class="v ${cls || ''}">${v}</div></div>`;
+}
+
+// 按日盈亏组合图：当日盈亏柱（红盈绿亏，左轴）+ 累计收益金线（右轴）
+function renderStatsChart(daily) {
+  const el = document.getElementById('statsChart');
+  if (!daily.length || !el) return;
+  // innerHTML 重建过容器：旧实例已脱离文档，先销毁再在新节点上初始化
+  if (statsChart) { statsChart.dispose(); statsChart = null; }
+  statsChart = echarts.init(el);
+  statsChart.setOption({
+    animation: false,
+    tooltip: {
+      trigger: 'axis',
+      formatter: ps => {
+        const i = ps[0].dataIndex;
+        const d = daily[i];
+        return `${d.date}<br>当日盈亏：${fmtPnl(d.pnl)}（${d.count} 笔平仓）<br>累计收益：${fmtPnl(d.cum)}`;
+      },
+    },
+    legend: { data: ['当日盈亏', '累计收益'], top: 0, textStyle: { fontSize: 11 } },
+    grid: { left: 60, right: 60, top: 28, bottom: 24 },
+    xAxis: { type: 'category', data: daily.map(d => d.date.slice(5)),
+      axisLabel: { fontSize: 10, color: '#666' } },
+    yAxis: [
+      { type: 'value', axisLabel: { fontSize: 10, color: '#666' }, splitLine: { lineStyle: { color: '#eee' } } },
+      { type: 'value', axisLabel: { fontSize: 10, color: '#666' }, splitLine: { show: false } },
+    ],
+    series: [
+      { name: '当日盈亏', type: 'bar', data: daily.map(d => ({
+          value: d.pnl, itemStyle: { color: d.pnl >= 0 ? UP : DOWN },
+        })) },
+      { name: '累计收益', type: 'line', yAxisIndex: 1, data: daily.map(d => d.cum),
+        symbol: 'circle', symbolSize: 4, lineStyle: { color: SIG, width: 2 },
+        itemStyle: { color: SIG } },
+    ],
+  }, true);
+  statsChart.resize();
+}
+
+// 每月盈亏幅度图：当月盈亏幅度柱（红盈绿亏，左轴，基于月初总资产）+ 累计收益率金线（右轴）
+function renderMonthChart(monthly) {
+  const el = document.getElementById('statsMonthChart');
+  if (!monthly || !monthly.length || !el) return;
+  if (monthChart) { monthChart.dispose(); monthChart = null; }
+  monthChart = echarts.init(el);
+  const fmtPct = v => v == null ? '-' : (v > 0 ? '+' : '') + v + '%';
+  monthChart.setOption({
+    animation: false,
+    tooltip: {
+      trigger: 'axis',
+      formatter: ps => {
+        const d = monthly[ps[0].dataIndex];
+        return `${d.month}<br>当月盈亏：${fmtPnl(d.pnl)}（${d.count} 笔平仓）<br>当月幅度：${fmtPct(d.pct)}<br>累计收益率：${fmtPct(d.cum_pct)}`;
+      },
+    },
+    legend: { data: ['当月盈亏幅度', '累计收益率'], top: 0, textStyle: { fontSize: 11 } },
+    grid: { left: 60, right: 60, top: 28, bottom: 24 },
+    xAxis: { type: 'category', data: monthly.map(d => d.month),
+      axisLabel: { fontSize: 10, color: '#666' } },
+    yAxis: [
+      { type: 'value', axisLabel: { formatter: '{value}%', fontSize: 10, color: '#666' }, splitLine: { lineStyle: { color: '#eee' } } },
+      { type: 'value', axisLabel: { formatter: '{value}%', fontSize: 10, color: '#666' }, splitLine: { show: false } },
+    ],
+    series: [
+      { name: '当月盈亏幅度', type: 'bar', data: monthly.map(d => ({
+          value: d.pct, itemStyle: { color: d.pct == null ? '#999' : (d.pct >= 0 ? UP : DOWN) },
+        })) },
+      { name: '累计收益率', type: 'line', yAxisIndex: 1, data: monthly.map(d => d.cum_pct),
+        symbol: 'circle', symbolSize: 4, lineStyle: { color: SIG, width: 2 },
+        itemStyle: { color: SIG } },
+    ],
+  }, true);
+  monthChart.resize();
+}
+
+// ===== 交易个股回看表：全部交易个股 + 表头点击排序 + 代码过滤 + 行点击跳转 =====
+const RV_TH = 5;   // 大亏/大赚高亮阈值（该股资金加权收益率 ±5%）
+const RV = { stocks: [], key: 'pnl', dir: -1, q: '', cur: '' };   // 默认按累计盈亏降序（大赚在前，翻到头即大亏在前）；cur=当前回看个股（面板高亮）
+
+function renderRvTable() {
+  const thead = document.querySelector('#rvTable thead tr');
+  if (!thead) return;
+  thead.querySelectorAll('th[data-k]').forEach(th => {
+    th.textContent = th.dataset.label + (RV.key === th.dataset.k ? (RV.dir > 0 ? ' ↑' : ' ↓') : '');
+  });
+  const rows = RV.stocks
+    .filter(x => !RV.q || x.code.includes(RV.q))
+    .sort((a, b) => {
+      const va = a[RV.key], vb = b[RV.key];
+      if (typeof va === 'string' || typeof vb === 'string') return String(va).localeCompare(String(vb)) * RV.dir;
+      return ((va == null ? -Infinity : va) - (vb == null ? -Infinity : vb)) * RV.dir;
+    });
+  document.getElementById('rvBody').innerHTML = rows.map(x =>
+    `<tr class="rv-row ${x.code === RV.cur ? 'rv-cur ' : ''}${x.pct >= RV_TH ? 'rv-great' : (x.pct != null && x.pct <= -RV_TH ? 'rv-bad' : '')}" data-code="${x.code}" data-buy="${x.first_buy}">` +
+    `<td>${x.code}</td><td>${x.count}</td><td>${x.wins}/${x.losses}</td>` +
+    `<td>${x.win_rate}%</td><td>${pnlCell(x.pnl)}</td>` +
+    `<td class="${pnlCls(x.pct || 0)}">${x.pct == null ? '-' : (x.pct > 0 ? '+' : '') + x.pct}%</td>` +
+    `<td>${x.avg_hold}日</td></tr>`).join('');
+}
+
+// 行点击跳转：空闲态关闭弹层，主页面定位该股信号并查询（K线/B/S买卖点/历史记录全部复用现有渲染）
+function jumpToStock(code, buyDate) {
+  const hint = document.getElementById('rvHint');
+  const say = t => { hint.textContent = t; setTimeout(() => { if (hint.textContent === t) hint.textContent = ''; }, 2500); };
+  if (TRAINING) { say('训练中，请先结束训练再回看'); return; }
+  const idxs = SIGNALS.map((s, i) => (s.code === code ? i : -1)).filter(i => i >= 0);
+  if (!idxs.length) { say(`代码 ${code} 不在信号清单中`); return; }
+  // 同股多信号日：取首笔买入日之前最近的一个（覆盖本次交易窗口）；无则取最早信号
+  const before = buyDate ? idxs.filter(i => SIGNALS[i].trade_date <= buyDate) : [];
+  const pick = before.length ? before[before.length - 1] : idxs[0];
+  RV.cur = code;   // 面板中当前回看个股金色描边；面板保持打开，K线在左侧直接切换
+  renderRvTable(); // 立即重渲染，选中行描边马上可见
+  sel.value = String(pick);
+  DAYS_AFTER = 0;
+  query('signal');
+}
+
+// 面板位置对齐右侧表单区实际矩形（宽高完全重合，K线区不受影响）；窗口变化时跟随
+function placePanel() {
+  const r = document.querySelector('.form-panel').getBoundingClientRect();
+  statsPanel.style.top = r.top + 'px';
+  statsPanel.style.right = (window.innerWidth - r.right) + 'px';
+  statsPanel.style.bottom = (window.innerHeight - r.bottom) + 'px';
+  statsPanel.style.width = r.width + 'px';
+}
+
+// 开合成绩面板：已开则关闭；每次打开重新拉 /api/stats（反映最近训练交易）
+async function openStats() {
+  if (statsPanel.style.display !== 'none') { statsPanel.style.display = 'none'; return; }
+  placePanel();
+  statsPanel.style.display = 'flex';
+  statsBody.textContent = '加载中...';
+  try {
+    const res = await fetch('/api/stats');
+    const s = await res.json();
+    if (!res.ok) { statsBody.textContent = s.error || '统计加载失败'; return; }
+
+    if (!s.count) {
+      statsBody.innerHTML = '<div class="stats-empty">暂无已完成交易（结束训练平仓后计入统计）</div>';
+      return;
+    }
+
+    const plr = s.pl_ratio == null ? '-' : s.pl_ratio;
+    const best = s.best ? `${s.best.code} ${s.best.pnl_pct > 0 ? '+' : ''}${s.best.pnl_pct}%` : '-';
+    const worst = s.worst ? `${s.worst.code} ${s.worst.pnl_pct}%` : '-';
+    let html = `
+      <div class="stats-cards">
+        ${statsCard('初始资金', s.init_cash.toLocaleString())}
+        ${statsCard('当前现金', s.cash.toLocaleString())}
+        ${statsCard('累计收益', fmtPnl(s.total_pnl), pnlCls(s.total_pnl))}
+        ${statsCard('收益率', (s.total_pct > 0 ? '+' : '') + s.total_pct + '%', pnlCls(s.total_pct))}
+        ${statsCard('交易笔数', s.count)}
+        ${statsCard('胜率', s.win_rate + `%（${s.wins}/${s.count}）`)}
+        ${statsCard('盈亏比', plr)}
+        ${statsCard('平均持有', s.avg_hold + ' 交易日')}
+        ${statsCard('训练股票数', s.stocks_trained)}
+        ${statsCard('平均盈利', fmtPnl(s.avg_win), 'up')}
+        ${statsCard('平均亏损', fmtPnl(-s.avg_loss), 'down')}
+        ${statsCard('最佳/最差单笔', best + ' / ' + worst)}
+      </div>
+      <div class="stats-sec">按日盈亏（柱=当日平仓盈亏，线=累计收益）</div>
+      <div id="statsChart"></div>
+      <div class="stats-sec">每月盈亏（柱=当月盈亏幅度，线=累计收益率）</div>
+      <div id="statsMonthChart"></div>
+      <div class="stats-sec">交易个股（点击表头排序 · 点击行回看该股K线）</div>
+      <div class="rv-bar"><input id="rvSearch" placeholder="输入代码过滤..." value="${RV.q}"><span class="rv-hint" id="rvHint"></span></div>
+      <table class="stats-table" id="rvTable">
+        <thead><tr>
+          <th data-k="code" data-label="代码">代码</th>
+          <th data-k="count" data-label="笔数">笔数</th>
+          <th data-k="wins" data-label="胜/负">胜/负</th>
+          <th data-k="win_rate" data-label="胜率">胜率</th>
+          <th data-k="pnl" data-label="累计盈亏">累计盈亏</th>
+          <th data-k="pct" data-label="收益率">收益率</th>
+          <th data-k="avg_hold" data-label="平均持有">平均持有</th>
+        </tr></thead>
+        <tbody id="rvBody"></tbody>
+      </table>
+      <div class="stats-sec">每笔明细（点击行回看该股K线）</div>
+      <table class="stats-table">
+        <tr><th>代码</th><th>买入日/价</th><th>卖出日/价</th><th>持有</th><th>盈亏</th><th>收益率</th></tr>
+        ${s.details.map(p => `<tr class="rv-row" data-code="${p.code}" data-buy="${p.buy_date}"><td>${p.code}</td><td>${p.buy_date} / ${p.buy_price}</td><td>${p.sell_date} / ${p.sell_price}</td><td>${p.hold}日</td><td>${pnlCell(p.pnl)}</td><td class="${pnlCls(p.pnl_pct)}">${p.pnl_pct > 0 ? '+' : ''}${p.pnl_pct}%</td></tr>`).join('')}
+      </table>`;
+    statsBody.innerHTML = html;
+    // 各股首笔买入日：同股多信号日时跳转锚点选取用
+    const firstBuy = {};
+    s.details.forEach(p => { if (!firstBuy[p.code] || p.buy_date < firstBuy[p.code]) firstBuy[p.code] = p.buy_date; });
+    RV.stocks = s.stocks.map(x => ({ ...x, first_buy: firstBuy[x.code] || '' }));
+    renderRvTable();
+    renderStatsChart(s.daily);
+    renderMonthChart(s.monthly);
+  } catch (e) {
+    statsBody.textContent = '统计加载失败：' + e.message;
+  }
+}
+
+document.getElementById('statsBtn').addEventListener('click', openStats);
+document.getElementById('statsClose').addEventListener('click', () => { statsPanel.style.display = 'none'; });
+// 窗口尺寸变化：K线自适应 + 面板跟随表单区矩形 + 面板内图表重排
+window.addEventListener('resize', () => {
+  chart.resize();
+  placePanel();
+  if (statsPanel.style.display !== 'none') {
+    if (statsChart) statsChart.resize();
+    if (monthChart) monthChart.resize();
+  }
+});
+
+// 弹层内事件委托（statsBody 每次打开都重建，统一委托到容器只绑一次）：
+// 搜索框输入过滤、回看表表头点击排序、交易个股/每笔明细行点击跳转
+statsBody.addEventListener('input', e => {
+  if (e.target.id === 'rvSearch') { RV.q = e.target.value.trim(); renderRvTable(); }
+});
+statsBody.addEventListener('click', e => {
+  const th = e.target.closest('th[data-k]');
+  if (th) {
+    const k = th.dataset.k;
+    if (RV.key === k) RV.dir *= -1;                        // 同列再点：反向
+    else { RV.key = k; RV.dir = k === 'code' ? 1 : -1; }   // 代码列首点升序，数值列首点降序
+    renderRvTable();
+    return;
+  }
+  const row = e.target.closest('tr.rv-row');
+  if (row) jumpToStock(row.dataset.code, row.dataset.buy);
+});
+
 // 键盘快捷键：q=上一个 w=下一个 c=复制代码 d=Next day b=Buy s=Sell z=开始/结束训练；
-// 开关关闭、弹窗打开或焦点在输入控件时忽略（避免打字/看说明时误触发）；b/s 仅训练态生效
+// 开关关闭、统计面板/说明弹窗打开或焦点在输入控件时忽略（避免打字/回看时误触发）；b/s 仅训练态生效
 function hotkeyEnabled() {
   return document.getElementById('hotkeyOn').checked && !helpOpen();
 }
