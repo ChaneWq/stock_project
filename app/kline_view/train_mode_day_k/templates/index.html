@@ -87,7 +87,7 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
 .tip { font-size: 12px; color: #909399; }
 /* 左上角固定数据面板：随十字光标刷新内容，位置固定，不遮挡交互（深色底适配白色指标标签） */
 .info-panel { position: absolute; top: 6px; left: 66px; z-index: 10; pointer-events: none;
-  background: rgba(24,24,24,.85); border: 1px solid #444; border-radius: 6px;
+  background: rgba(24,24,24,.55); border: 1px solid rgba(68,68,68,.6); border-radius: 6px;
   padding: 5px 12px; font-size: 12px; line-height: 1.8; color: #ccc; }
 .up { color: #e64545; }
 .down { color: #1dbf74; }
@@ -263,9 +263,7 @@ function showBar(i) {
   if (i === d.signal_index) tag = '　<span class="sig-tag">信号日</span>';
   else if (others.includes(i)) tag = '　<span class="sig-tag-other">信号</span>';
   infoPanel.innerHTML =
-    `<div><b>${d.dates[i]}</b>${tag}　<span class="${cls}">${pct == null ? '-' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%'}</span></div>` +
-    `<div>开 <span class="${prevC && o >= prevC ? 'up' : 'down'}">${o}</span>　高 ${h}　低 ${l}　收 <span class="${cls}">${c}</span></div>` +
-    `<div>量 ${fmtVol(d.volumes[i])}</div>` +
+    `<div><b>${d.dates[i]}</b>${tag}　<span class="${cls}">${pct == null ? '-' : (pct >= 0 ? '+' : '') + pct.toFixed(2) + '%'}</span>　开 <span class="${prevC && o >= prevC ? 'up' : 'down'}">${o}</span>　高 ${h}　低 ${l}　收 <span class="${cls}">${c}</span>　量 ${fmtVol(d.volumes[i])}</div>` +
     `<div>${mas}</div>`;
 }
 
