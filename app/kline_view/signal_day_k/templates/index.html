@@ -64,6 +64,17 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
 .tag-empty { font-size: 12px; color: #909399; padding: 4px 2px; }
 .tag-new { display: block; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #dcdfe6;
   color: #409eff; font-size: 13px; cursor: pointer; }
+/* 使用说明弹窗（惯例同 train_mode_day_k）：全屏遮罩 + 居中卡片，点 × 或遮罩关闭 */
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100;
+  display: flex; align-items: center; justify-content: center; }
+.modal-card { background: #fff; border-radius: 8px; width: 560px; max-width: 92vw; max-height: 82vh;
+  overflow-y: auto; padding: 18px 22px; box-shadow: 0 8px 30px rgba(0,0,0,.25); }
+.modal-head { font-size: 16px; font-weight: 600; margin-bottom: 10px;
+  display: flex; justify-content: space-between; align-items: center; }
+.modal-close { cursor: pointer; font-size: 20px; color: #909399; line-height: 1; padding: 0 4px; }
+.modal-close:hover { color: #333; }
+.modal-body { font-size: 13px; line-height: 1.9; color: #444; }
+.modal-body b { display: block; margin: 8px 0 2px; color: #222; }
 </style>
 </head>
 <body>
@@ -130,11 +141,36 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
         <label for="hLineOn">收盘价线</label>
         <input type="checkbox" id="hLineOn" checked style="accent-color:#f5a623">
       </div>
+      <button id="helpBtn">使用说明</button>
       <span class="tip">信号日：金色竖线+蜡烛金边；窗口修改即时生效，拖动滑块看全部数据</span>
-    </div>
   </div>
   <div class="note" id="note"></div>
   <div class="msg" id="msg"></div>
+</div>
+
+<!-- 使用说明弹窗（惯例同 train_mode_day_k）：点 × 或遮罩关闭 -->
+<div class="modal" id="helpModal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-head">使用说明 <span class="modal-close" id="helpClose">×</span></div>
+    <div class="modal-body">
+      <b>【核心玩法】</b><br>
+      选分组 → 逐条看信号K线（信号日前 n / 后 n 个交易日）→ 标记分组归类 → 书签记录进度，
+      下次打开自动续读。<br>
+      展示窗口前 n/后 n 可自定义（默认 200/20 全量），修改即时生效无需重新取数，拖动滑块可看全部数据。
+      <b>【分组与标记】</b><br>
+      · ＋建组 / 删组：删组会一并清除该组全部标记与书签；「全部」为内置分组不可删<br>
+      · 标记分组：按信号（代码+信号日）勾选归属，一条信号可属多个分组，同股不同信号日可归不同组<br>
+      · 选中分组后：信号下拉 / 序号 / 上一个下一个 / q/w 均按该组过滤；下拉选项尾部 [组名] 为已标记提示
+      <b>【书签（阅读进度）】</b><br>
+      · 每组一个书签，只前进不后退；「跳书签」回看书签信号，下拉中 ★ 即书签位置<br>
+      · 进入分组视图自动定位到书签的下一条（未读首条，末尾循环），点「下一个」接着轮询
+      <b>【快捷键】</b>（跟随「快捷键」开关，焦点在输入框时无效）<br>
+      q=上一个　w=下一个　c=复制代码　r=切换快捷键开关（关闭后仍可按 r 重新开启）
+      <b>【图上标注】</b><br>
+      金色竖线=信号日（「信号日线」开关）　金色虚线=信号日收盘价（「收盘价线」开关）<br>
+      灰色点线=同股其它信号日　固定数据面板随十字光标刷新
+    </div>
+  </div>
 </div>
 
 <div class="panel">
@@ -556,18 +592,34 @@ async function copyCode() {
   setTimeout(() => { if (msg.textContent.includes('剪贴板') || msg.textContent === '复制失败') msg.textContent = ''; }, 2000);
 }
 
-// 键盘快捷键：q=上一个 w=下一个 c=复制代码；开关关闭或焦点在输入控件时忽略（避免打字误触发）
+// 键盘快捷键：q=上一个 w=下一个 c=复制代码 r=切换快捷键开关；
+// 开关关闭或焦点在输入控件时忽略 q/w/c（避免打字误触发）；r 不受开关限制（关闭后可按 r 重新开启）；
+// 使用说明弹窗打开时全部快捷键失效（惯例同 train_mode_day_k）
+const helpModal = document.getElementById('helpModal');
+function helpOpen() { return helpModal.style.display !== 'none'; }
 function hotkeyEnabled() {
   return document.getElementById('hotkeyOn').checked;
 }
+function toggleHotkey() {
+  const cb = document.getElementById('hotkeyOn');
+  cb.checked = !cb.checked;
+  msg.textContent = cb.checked ? '快捷键已开启' : '快捷键已关闭（按 r 重新开启）';
+  setTimeout(() => { if (msg.textContent.startsWith('快捷键已')) msg.textContent = ''; }, 2000);
+}
 document.addEventListener('keydown', e => {
-  if (!hotkeyEnabled()) return;
   const tag = (document.activeElement && document.activeElement.tagName) || '';
-  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag)) return;
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag) || helpOpen()) return;
+  if (e.key === 'r' || e.key === 'R') { toggleHotkey(); return; }
+  if (!hotkeyEnabled()) return;
   if (e.key === 'q' || e.key === 'Q') prevSignal();
   else if (e.key === 'w' || e.key === 'W') nextSignal();
   else if (e.key === 'c' || e.key === 'C') copyCode();
 });
+
+// 使用说明弹窗：点按钮打开，点 × 或遮罩关闭
+document.getElementById('helpBtn').addEventListener('click', () => { helpModal.style.display = 'flex'; });
+document.getElementById('helpClose').addEventListener('click', () => { helpModal.style.display = 'none'; });
+helpModal.addEventListener('click', e => { if (e.target === helpModal) helpModal.style.display = 'none'; });
 
 // ===================== 分组管理 =====================
 // 切换分组：过滤重建信号下拉（当前信号在组内则保持，否则跳组内第一个）
