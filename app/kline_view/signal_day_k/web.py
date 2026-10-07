@@ -13,10 +13,13 @@
     GET  /            渲染页面
     GET  /api/signals 信号清单（读 signals.csv，保持文件顺序）
     GET  /api/kline   查询参数：code + date（信号日 YYYY-MM-DD）
-    GET  /api/groups  分组与标记清单
+    GET  /api/groups  分组/标记/书签清单
     POST /api/groups  创建分组（JSON: name）
-    DELETE /api/groups 删除分组（JSON: name，同时清理该组全部标记）
-    POST /api/tags    标记信号归属分组（JSON: code, date, groups[]，整体替换）
+    DELETE /api/groups 删除分组（JSON: name，同时清理该组全部标记与书签）
+    POST /api/tags    标记信号归属分组（JSON: code, date, groups[]，整体替换；
+                      信号被移出分组时级联清除指向该信号的分组书签）
+    POST /api/bookmark  标记分组书签（JSON: group, code, date；书签只前进不后退）
+    DELETE /api/bookmark 取消分组书签（JSON: group）
 """
 
 import bisect
@@ -79,9 +82,9 @@ _GROUPS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'groups.
 
 
 def load_groups():
-    """读分组与标记（文件缺失/损坏回退空结构，不报错）"""
+    """读分组/标记/书签（文件缺失/损坏回退空结构，不报错）"""
     if not os.path.exists(_GROUPS_JSON):
-        return {'groups': [], 'tags': {}}
+        return {'groups': [], 'tags': {}, 'bookmarks': {}}
     try:
         with open(_GROUPS_JSON, 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -90,9 +93,17 @@ def load_groups():
         groups = [str(g) for g in data.get('groups', [])]
         tags = {str(k): [str(g) for g in v if g in groups]
                 for k, v in data.get('tags', {}).items() if isinstance(v, list)}
-        return {'groups': groups, 'tags': {k: v for k, v in tags.items() if v}}
+        # 书签：{分组名: "code|date"}，分组须存在（"全部"为内置键）；旧文件无此字段视为空
+        bookmarks = {}
+        raw_bm = data.get('bookmarks', {})
+        if isinstance(raw_bm, dict):
+            for k, v in raw_bm.items():
+                k, v = str(k), str(v)
+                if (k in groups or k == '全部') and '|' in v:
+                    bookmarks[k] = v
+        return {'groups': groups, 'tags': {k: v for k, v in tags.items() if v}, 'bookmarks': bookmarks}
     except Exception:
-        return {'groups': [], 'tags': {}}
+        return {'groups': [], 'tags': {}, 'bookmarks': {}}
 
 
 def save_groups(data):
@@ -139,12 +150,13 @@ def api_groups():
         save_groups(g)
         return jsonify({'ok': True})
 
-    # DELETE：删除分组并清理所有信号上该组标记
+    # DELETE：删除分组并清理所有信号上该组标记与该书签
     if name not in g['groups']:
         return jsonify({'error': f'分组「{name}」不存在'}), 404
     g['groups'].remove(name)
     g['tags'] = {k: [t for t in v if t != name] for k, v in g['tags'].items()}
     g['tags'] = {k: v for k, v in g['tags'].items() if v}
+    g['bookmarks'].pop(name, None)
     save_groups(g)
     return jsonify({'ok': True})
 
@@ -171,8 +183,49 @@ def api_tags():
         g['tags'][key] = groups
     else:
         g['tags'].pop(key, None)
+    # 信号被移出分组时，级联清除指向该信号的书签（"全部"书签不受标记影响）
+    for grp in list(g['bookmarks']):
+        if grp != '全部' and g['bookmarks'][grp] == key and grp not in g['tags'].get(key, []):
+            del g['bookmarks'][grp]
     save_groups(g)
     return jsonify({'ok': True})
+
+
+@app.route('/api/bookmark', methods=['POST', 'DELETE'])
+def api_bookmark():
+    """分组书签：POST 标记（书签只前进，新位置更前时保留原书签）/ DELETE 取消"""
+    data = request.get_json(silent=True) or {}
+    group = (data.get('group') or '').strip()
+    if not group:
+        return jsonify({'error': '缺少 group 参数'}), 400
+
+    g = load_groups()
+    if group != '全部' and group not in g['groups']:
+        return jsonify({'error': f'分组「{group}」不存在'}), 404
+
+    if request.method == 'DELETE':
+        g['bookmarks'].pop(group, None)
+        save_groups(g)
+        return jsonify({'ok': True})
+
+    code = (data.get('code') or '').strip()
+    date = (data.get('date') or '').strip()
+    key = f'{code}|{date}'
+
+    # 用 signals.csv 清单顺序做位置比较（书签=阅读进度，只前进不后退）
+    try:
+        keys = [f"{s['code']}|{s['trade_date']}" for s in load_signals()]
+    except Exception as e:
+        return jsonify({'error': f'读取 signals.csv 失败：{e}'}), 500
+    if key not in keys:
+        return jsonify({'error': f'信号 {key} 不在 signals.csv 中'}), 404
+
+    old = g['bookmarks'].get(group)
+    if old and old in keys and keys.index(old) > keys.index(key):
+        return jsonify({'ok': True, 'kept': True, 'key': old})   # 保留更靠后的原书签
+    g['bookmarks'][group] = key
+    save_groups(g)
+    return jsonify({'ok': True, 'kept': False, 'key': key})
 
 
 @app.route('/api/kline')

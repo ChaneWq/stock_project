@@ -80,6 +80,11 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       </div>
     </div>
     <div class="form-item">
+      <button id="bmBtn">标记书签</button>
+      <button id="bmGo" disabled>跳书签</button>
+      <span class="tip" id="bmInfo"></span>
+    </div>
+    <div class="form-item">
       <label>展示</label>
       <input type="number" id="viewBefore" value="200" min="0" max="200" style="width:66px">
       <label>前 /</label>
@@ -123,6 +128,7 @@ let KDATA = null;
 let SIGNALS = [];    // 全量信号（signals.csv 顺序）
 let GROUPS = [];     // 用户分组名列表（不含内置"全部"）
 let TAGS = {};       // 标记：{"code|date": ["组名", ...]}
+let BOOKMARKS = {};  // 分组书签：{分组名: "code|date"}，每组一个阅读进度
 let FILTERED = [];   // 当前分组过滤后的信号（下拉/序号/上下键均基于此）
 let curGroup = '全部';
 const sigKey = s => s.code + '|' + s.trade_date;
@@ -185,15 +191,18 @@ function renderGroupSel() {
   document.getElementById('delGroup').disabled = (curGroup === '全部');
 }
 
-// 重建信号下拉选项（已标记的附分组名，便于识别）
+// 重建信号下拉选项（已标记的附分组名，本组书签附★，便于识别）
 function rebuildSignalOptions() {
+  const bmKey = BOOKMARKS[curGroup];
   sel.innerHTML = FILTERED.map((s, i) => {
     const gs = TAGS[sigKey(s)] || [];
-    return `<option value="${i}">${s.code}　${s.trade_date}${gs.length ? '　[' + gs.join(',') + ']' : ''}</option>`;
+    const bm = sigKey(s) === bmKey ? '　★' : '';
+    return `<option value="${i}">${s.code}　${s.trade_date}${gs.length ? '　[' + gs.join(',') + ']' : ''}${bm}</option>`;
   }).join('');
 }
 
-// 应用分组过滤：当前信号仍在组内则保持选中，否则跳组内第一个；组空则提示
+// 应用分组过滤。定位优先级：当前信号仍在组内→保持；
+// 不在组内→组内书签的下一条（未读首条，末尾循环，续读）；无书签→第1个
 function applyGroupFilter() {
   const prev = FILTERED[Number(sel.value)];
   const curKey = prev ? sigKey(prev) : null;
@@ -201,12 +210,17 @@ function applyGroupFilter() {
     : SIGNALS.filter(s => (TAGS[sigKey(s)] || []).includes(curGroup));
   rebuildSignalOptions();
   document.getElementById('posTotal').textContent = `/ ${FILTERED.length}`;
+  renderBookmarkUI();
   if (!FILTERED.length) {
     msg.textContent = `分组「${curGroup}」暂无信号，请先标记个股`;
     return;
   }
   let i = curKey ? FILTERED.findIndex(s => sigKey(s) === curKey) : -1;
-  if (i < 0) i = 0;
+  if (i < 0) {
+    const bmKey = BOOKMARKS[curGroup];
+    const bi = bmKey ? FILTERED.findIndex(s => sigKey(s) === bmKey) : -1;
+    i = bi < 0 ? 0 : (bi + 1) % FILTERED.length;
+  }
   sel.value = String(i);
   query();
 }
@@ -224,6 +238,7 @@ async function loadAll() {
       const gd = await grpRes.json();
       GROUPS = gd.groups || [];
       TAGS = gd.tags || {};
+      BOOKMARKS = gd.bookmarks || {};
     }
     renderGroupSel();
     applyGroupFilter();   // 默认"全部"，查询第一个信号
@@ -291,6 +306,7 @@ async function query() {
     if (data.note) noteEl.textContent = '提示：' + data.note;
     syncPos();       // 序号框跟随当前信号
     if (tagPop.classList.contains('show')) renderTagPop();   // 标记浮层开着时跟随切换信号
+    renderBookmarkUI();   // 书签按钮态跟随当前信号（标记/取消）
     prefetchAll();   // 当前图渲染完成后，后台串行预热全部信号数据
   } catch (e) {
     msg.textContent = '请求失败：' + e.message;
@@ -568,6 +584,7 @@ document.getElementById('delGroup').addEventListener('click', async () => {
     TAGS[k] = TAGS[k].filter(g => g !== name);
     if (!TAGS[k].length) delete TAGS[k];
   }
+  delete BOOKMARKS[name];   // 同步清理该书签（后端已级联删除）
   curGroup = '全部';
   renderGroupSel();
   applyGroupFilter();
@@ -600,10 +617,11 @@ async function saveTags() {
   if (groups.length) TAGS[sigKey(s)] = groups; else delete TAGS[sigKey(s)];
   renderGroupSel();   // 分组数量即时刷新
   if (curGroup !== '全部' && !groups.includes(curGroup)) {
-    applyGroupFilter();   // 当前信号被移出当前组 → 跳组内第一个
+    applyGroupFilter();   // 当前信号被移出当前组 → 按定位规则跳转（书签续读）
   } else {
+    const cur = Number(sel.value);   // 先存索引：重建下拉会重置选中项
     rebuildSignalOptions();   // 仍在当前视图：仅刷新选项上的分组标签
-    sel.value = String(Number(sel.value));
+    sel.value = String(cur);
   }
 }
 
@@ -632,6 +650,73 @@ document.addEventListener('click', e => {
   if (!tagPop.classList.contains('show')) return;
   if (tagPop.contains(e.target) || tagBtn.contains(e.target)) return;
   tagPop.classList.remove('show');
+});
+
+// ===================== 分组书签 =====================
+// 书签=阅读进度，每组一个只前进不后退；按钮无快捷键
+const bmBtn = document.getElementById('bmBtn');
+const bmGo = document.getElementById('bmGo');
+const bmInfo = document.getElementById('bmInfo');
+
+// 书签在当前分组视图中的序号（1 开始；无书签或书签不在组内返回 null）
+function bmPos() {
+  const key = BOOKMARKS[curGroup];
+  if (!key) return null;
+  const i = FILTERED.findIndex(s => sigKey(s) === key);
+  return i < 0 ? null : i + 1;
+}
+
+// 刷新书签按钮态/跳书签可用性/位置小字（当前信号或当前分组变化后调用）
+function renderBookmarkUI() {
+  const key = BOOKMARKS[curGroup];
+  const cur = FILTERED[Number(sel.value)];
+  bmBtn.textContent = (key && cur && key === sigKey(cur)) ? '取消书签' : '标记书签';
+  const pos = bmPos();
+  bmGo.disabled = pos == null;
+  bmInfo.textContent = pos == null ? '' : `书签 ${pos}`;
+}
+
+bmBtn.addEventListener('click', async () => {
+  const s = FILTERED[Number(sel.value)];
+  if (!s) return;
+  if (BOOKMARKS[curGroup] === sigKey(s)) {
+    const { res, data } = await postJSON('/api/bookmark', { group: curGroup }, 'DELETE');
+    if (!res.ok) { msg.textContent = data.error || '取消书签失败'; return; }
+    delete BOOKMARKS[curGroup];
+    msg.textContent = `已取消分组「${curGroup}」的书签`;
+  } else {
+    const { res, data } = await postJSON('/api/bookmark', { group: curGroup, code: s.code, date: s.trade_date });
+    if (!res.ok) { msg.textContent = data.error || '标记书签失败'; return; }
+    BOOKMARKS[curGroup] = data.key;
+    msg.textContent = data.kept
+      ? `书签保持在第 ${bmPos()} 个（只前进不后退）`
+      : `书签已标记至第 ${bmPos()} 个`;
+  }
+  const cur = Number(sel.value);   // 先存索引：重建下拉会重置选中项
+  renderBookmarkUI();
+  rebuildSignalOptions();   // ★ 标记跟随刷新
+  sel.value = String(cur);
+});
+
+// 跳书签：定位书签信号并查询；书签失效（信号已不在清单）时清除
+bmGo.addEventListener('click', async () => {
+  const pos = bmPos();
+  if (pos == null) {
+    if (BOOKMARKS[curGroup]) {
+      const cur = Number(sel.value);   // 先存索引：重建下拉会重置选中项
+      await postJSON('/api/bookmark', { group: curGroup }, 'DELETE');
+      delete BOOKMARKS[curGroup];
+      renderBookmarkUI();
+      rebuildSignalOptions();
+      sel.value = String(cur);
+      msg.textContent = '书签信号已不在清单中，已清除';
+    } else {
+      msg.textContent = `分组「${curGroup}」暂无书签`;
+    }
+    return;
+  }
+  sel.value = String(pos - 1);
+  query();
 });
 
 // 页面加载后拉取信号清单+分组并默认查询第一个
