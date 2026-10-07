@@ -653,7 +653,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'q' || e.key === 'Q') prevSignal();
   else if (e.key === 'w' || e.key === 'W') nextSignal();
   else if (e.key === 'c' || e.key === 'C') copyCode();
-  else if (e.key === 'n' || e.key === 'N') openNotePop();
+  else if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openNotePop(); }   // 阻止默认行为：否则n字符会落入随后聚焦的textarea
 });
 
 // 使用说明弹窗：点按钮打开，点 × 或遮罩关闭
