@@ -22,6 +22,17 @@ h1 { font-size: 18px; margin-bottom: 10px; flex: none; }
 .form-panel { width: 480px; flex: none; overflow-y: auto; }
 .form-panel .form-row { margin-bottom: 10px; }
 .form-panel .form-row:last-of-type { margin-bottom: 0; }
+/* 工具栏功能分区（惯例同 signal_day_k）：浅灰底圆角区块+左上角标签，纵向堆叠防误按 */
+.zone { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; position: relative;
+  background: #f8f9fb; border: 1px solid #e4e7ed; border-radius: 8px;
+  padding: 13px 12px 11px; margin-bottom: 14px; margin-top: 6px; }
+.zone-tag { position: absolute; top: -9px; left: 10px; font-size: 12px; color: #909399;
+  background: #fff; padding: 0 6px; border-radius: 4px; }
+.btn-ghost { background: #fff; color: #409eff; border: 1px solid #409eff; padding: 6px 15px; }
+.btn-danger { background: #fff; color: #e64545; border: 1px solid #f3b3b3; padding: 6px 15px; }
+.btn-danger:disabled { background: #fff; color: #f3b3b3; border-color: #f3d9d9; }
+#btn { min-width: 88px; }   /* 查询/查询中两态等宽，避免按钮宽度抖动推移同行控件 */
+.zone .acct { width: 100%; }   /* 账户面板在训练操作块内独立一行 */
 /* 使用说明弹窗：全屏遮罩 + 居中卡片，点 × 或遮罩关闭 */
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100;
   display: flex; align-items: center; justify-content: center; }
@@ -117,44 +128,44 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
 </div>
 
 <div class="panel form-panel">
-  <div class="form-row">
+  <div class="zone">
+    <span class="zone-tag">信号浏览</span>
     <div class="form-item">
       <label>信号</label>
       <select id="signal"></select>
     </div>
     <button id="prev">上一个</button>
     <button id="next">下一个</button>
-  </div>
-  <div class="form-row">
     <div class="form-item">
       <label>第</label>
       <input type="number" id="posNum" min="1" style="width:60px">
       <label id="posTotal">/ -</label>
     </div>
     <button id="btn">查询</button>
+    <button id="lastTrainBtn" class="btn-ghost" title="跳转到最近一次训练的信号">上次训练</button>
+  </div>
+  <div class="zone">
+    <span class="zone-tag">训练操作</span>
+    <button id="trainBtn">开始训练</button>
+    <button id="buyBtn" disabled>Buy</button>
+    <button id="sellBtn" disabled>Sell</button>
+    <button id="nextDay" disabled>Next day</button>
+    <span class="nd-prog" id="ndProg">信号日 +0 / 20</span>
+    <span class="acct" id="acctPanel"></span>
+  </div>
+  <div class="zone">
+    <span class="zone-tag">训练管理</span>
+    <button id="resetBtn" class="btn-danger">重置账户</button>
+    <button id="statsBtn">成绩统计</button>
+    <button id="helpBtn">使用说明</button>
+  </div>
+  <div class="zone">
+    <span class="zone-tag">展示设置</span>
     <div class="form-item">
       <label>展示</label>
       <input type="number" id="viewBefore" value="200" min="0" max="200" style="width:66px">
       <label>前</label>
     </div>
-    <button id="lastTrainBtn" title="跳转到最近一次训练的信号">上次训练</button>
-  </div>
-  <div class="form-row">
-    <button id="trainBtn">开始训练</button>
-    <button id="resetBtn">重置账户</button>
-    <button id="statsBtn">成绩统计</button>
-    <button id="helpBtn">使用说明</button>
-  </div>
-  <div class="form-row">
-    <button id="buyBtn" disabled>Buy</button>
-    <button id="sellBtn" disabled>Sell</button>
-    <button id="nextDay" disabled>Next day</button>
-    <span class="nd-prog" id="ndProg">信号日 +0 / 20</span>
-  </div>
-  <div class="form-row">
-    <span class="acct" id="acctPanel"></span>
-  </div>
-  <div class="form-row">
     <div class="form-item">
       <label for="hotkeyOn">快捷键</label>
       <input type="checkbox" id="hotkeyOn" checked style="accent-color:#f5a623">
