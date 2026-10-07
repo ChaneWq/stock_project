@@ -64,6 +64,21 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
 .tag-empty { font-size: 12px; color: #909399; padding: 4px 2px; }
 .tag-new { display: block; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #dcdfe6;
   color: #409eff; font-size: 13px; cursor: pointer; }
+/* 复盘备注浮层：锚定在写备注按钮下方（金色主题），点击外部关闭 */
+.note-wrap { position: relative; }
+.note-pop { display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
+  background: #fff; border: 1px solid #f5d89a; border-radius: 6px; padding: 10px 12px; width: 330px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.15); text-align: left; }
+.note-pop.show { display: block; }
+.note-pop-title { font-size: 13px; font-weight: bold; margin-bottom: 6px; color: #b8860b; }
+.note-pop textarea { width: 100%; height: 110px; padding: 6px 8px; border: 1px solid #dcdfe6;
+  border-radius: 4px; font-size: 13px; line-height: 1.6; resize: vertical; font-family: inherit; }
+.note-pop-foot { display: flex; gap: 10px; margin-top: 8px; align-items: center; }
+.note-pop-tip { font-size: 12px; color: #909399; }
+/* 图表下方备注条：切信号自动显示当前信号备注全文，点击打开编辑浮层 */
+.knote { display: none; margin-top: 8px; padding: 6px 12px; background: #fffaf0;
+  border: 1px solid #f5d89a; border-radius: 6px; font-size: 13px; color: #b8860b;
+  line-height: 1.7; cursor: pointer; white-space: pre-wrap; }
 /* 使用说明弹窗（惯例同 train_mode_day_k）：全屏遮罩 + 居中卡片，点 × 或遮罩关闭 */
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 100;
   display: flex; align-items: center; justify-content: center; }
@@ -118,6 +133,17 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       <span class="zone-tag">阅读书签</span>
       <button id="bmBtn" class="btn-gold">标记书签</button>
       <button id="bmGo" class="btn-gold-ghost" disabled>跳书签</button>
+      <div class="form-item note-wrap">
+        <button id="noteBtn" class="btn-gold-ghost">写备注</button>
+        <div class="note-pop" id="notePop">
+          <div class="note-pop-title" id="notePopTitle"></div>
+          <textarea id="noteText" maxlength="2000" placeholder="记录复盘这个信号时发现的点（好的/不好的），切到该信号即可回忆"></textarea>
+          <div class="note-pop-foot">
+            <button id="noteSave" class="btn-gold" style="padding:6px 15px;">保存</button>
+            <span class="note-pop-tip">清空内容保存 = 删除备注，最多 2000 字</span>
+          </div>
+        </div>
+      </div>
       <span class="tip bm-info" id="bmInfo"></span>
     </div>
     <div class="zone">
@@ -164,8 +190,13 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       <b>【书签（阅读进度）】</b><br>
       · 每组一个书签，只前进不后退；「跳书签」回看书签信号，下拉中 ★ 即书签位置<br>
       · 进入分组视图自动定位到书签的下一条（未读首条，末尾循环），点「下一个」接着轮询
+      <b>【复盘备注】</b><br>
+      · 按信号（代码+信号日）记录复盘发现的点，与分组无关全局共享，任何分组下看到的是同一份备注<br>
+      · 图表下方备注条自动显示当前信号备注全文，点备注条 /「写备注」按钮 / 快捷键 n 编辑<br>
+      · 有备注的信号下拉尾部带 ✎，「写备注」按钮金实底深色提示；清空内容保存即删除备注
       <b>【快捷键】</b>（跟随「快捷键」开关，焦点在输入框时无效）<br>
-      q=上一个　w=下一个　c=复制代码　r=切换快捷键开关（关闭后仍可按 r 重新开启）
+      q=上一个　w=下一个　c=复制代码　n=写备注　r=切换快捷键开关（关闭后仍可按 r 重新开启）<br>
+      Esc=关闭弹窗/浮层（使用说明、标记分组、写备注；不受开关限制，输入框内也生效）
       <b>【图上标注】</b><br>
       金色竖线=信号日（「信号日线」开关）　金色虚线=信号日收盘价（「收盘价线」开关）<br>
       灰色点线=同股其它信号日　固定数据面板随十字光标刷新
@@ -178,6 +209,7 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
     <div id="chart"></div>
     <div class="info-panel" id="infoPanel">加载中...</div>
   </div>
+  <div class="knote" id="knote" title="点击编辑备注"></div>
 </div>
 
 <script>
@@ -193,6 +225,7 @@ let SIGNALS = [];    // 全量信号（signals.csv 顺序）
 let GROUPS = [];     // 用户分组名列表（不含内置"全部"）
 let TAGS = {};       // 标记：{"code|date": ["组名", ...]}
 let BOOKMARKS = {};  // 分组书签：{分组名: "code|date"}，每组一个阅读进度
+let NOTES = {};      // 复盘备注：{"code|date": "文本"}，与分组无关全局共享
 let FILTERED = [];   // 当前分组过滤后的信号（下拉/序号/上下键均基于此）
 let curGroup = '全部';
 const sigKey = s => s.code + '|' + s.trade_date;
@@ -255,13 +288,14 @@ function renderGroupSel() {
   document.getElementById('delGroup').disabled = (curGroup === '全部');
 }
 
-// 重建信号下拉选项（已标记的附分组名，本组书签附★，便于识别）
+// 重建信号下拉选项（已标记的附分组名，本组书签附★，有备注附✎，便于识别）
 function rebuildSignalOptions() {
   const bmKey = BOOKMARKS[curGroup];
   sel.innerHTML = FILTERED.map((s, i) => {
     const gs = TAGS[sigKey(s)] || [];
     const bm = sigKey(s) === bmKey ? '　★' : '';
-    return `<option value="${i}">${s.code}　${s.trade_date}${gs.length ? '　[' + gs.join(',') + ']' : ''}${bm}</option>`;
+    const nt = NOTES[sigKey(s)] ? '　✎' : '';
+    return `<option value="${i}">${s.code}　${s.trade_date}${gs.length ? '　[' + gs.join(',') + ']' : ''}${bm}${nt}</option>`;
   }).join('');
 }
 
@@ -277,6 +311,7 @@ function applyGroupFilter() {
   renderBookmarkUI();
   if (!FILTERED.length) {
     msg.textContent = `分组「${curGroup}」暂无信号，请先标记个股`;
+    renderKnote();   // 组空隐藏备注条
     return;
   }
   let i = curKey ? FILTERED.findIndex(s => sigKey(s) === curKey) : -1;
@@ -291,7 +326,8 @@ function applyGroupFilter() {
 
 async function loadAll() {
   try {
-    const [sigRes, grpRes] = await Promise.all([fetch('/api/signals'), fetch('/api/groups')]);
+    const [sigRes, grpRes, noteRes] = await Promise.all([
+      fetch('/api/signals'), fetch('/api/groups'), fetch('/api/notes')]);
     const list = await sigRes.json();
     if (!sigRes.ok || !Array.isArray(list) || !list.length) {
       msg.textContent = (list && list.error) || 'signals.csv 为空或不存在';
@@ -304,6 +340,7 @@ async function loadAll() {
       TAGS = gd.tags || {};
       BOOKMARKS = gd.bookmarks || {};
     }
+    if (noteRes.ok) NOTES = await noteRes.json() || {};   // 备注全量缓存
     renderGroupSel();
     applyGroupFilter();   // 默认"全部"，查询第一个信号
   } catch (e) {
@@ -361,6 +398,7 @@ async function query() {
   noteEl.textContent = '';
   btn.disabled = true;
   btn.textContent = '查询中...';
+  renderKnote();   // 备注条跟随当前信号（不依赖取数结果）
   try {
     const res = await fetch(`/api/kline?code=${s.code}&date=${s.trade_date}`);
     const data = await res.json();
@@ -370,6 +408,7 @@ async function query() {
     if (data.note) noteEl.textContent = '提示：' + data.note;
     syncPos();       // 序号框跟随当前信号
     if (tagPop.classList.contains('show')) renderTagPop();   // 标记浮层开着时跟随切换信号
+    if (notePop.classList.contains('show')) renderNotePop(); // 备注浮层开着时跟随切换信号
     renderBookmarkUI();   // 书签按钮态跟随当前信号（标记/取消）
     prefetchAll();   // 当前图渲染完成后，后台串行预热全部信号数据
   } catch (e) {
@@ -614,6 +653,7 @@ document.addEventListener('keydown', e => {
   if (e.key === 'q' || e.key === 'Q') prevSignal();
   else if (e.key === 'w' || e.key === 'W') nextSignal();
   else if (e.key === 'c' || e.key === 'C') copyCode();
+  else if (e.key === 'n' || e.key === 'N') openNotePop();
 });
 
 // 使用说明弹窗：点按钮打开，点 × 或遮罩关闭
@@ -801,6 +841,79 @@ bmGo.addEventListener('click', async () => {
   }
   sel.value = String(pos - 1);
   query();
+});
+
+// ===================== 复盘备注 =====================
+// 备注按信号（code+信号日）存储，与分组无关全局共享；NOTES 页面加载时全量缓存
+const noteBtn = document.getElementById('noteBtn');
+const notePop = document.getElementById('notePop');
+const knoteEl = document.getElementById('knote');
+
+// 备注条：显示当前信号备注全文（无则隐藏），随信号切换在 query() 中调用；
+// 同时刷新「写备注」按钮两态（惯例同标记书签）：有备注=金实底深色，无备注=金描边浅色
+function renderKnote() {
+  const s = FILTERED[Number(sel.value)];
+  const txt = s ? (NOTES[sigKey(s)] || '') : '';
+  noteBtn.classList.toggle('btn-gold', !!txt);
+  noteBtn.classList.toggle('btn-gold-ghost', !txt);
+  if (!txt) { knoteEl.style.display = 'none'; return; }
+  knoteEl.textContent = '备注：' + txt;
+  knoteEl.style.display = 'block';
+}
+
+// 渲染浮层：当前信号（code+日期）+ 已存备注带入 textarea
+function renderNotePop() {
+  const s = FILTERED[Number(sel.value)];
+  if (!s) return false;
+  document.getElementById('notePopTitle').textContent = `${s.code}　${s.trade_date}`;
+  document.getElementById('noteText').value = NOTES[sigKey(s)] || '';
+  return true;
+}
+
+// 打开备注浮层（按钮点击 / 备注条点击 / 快捷键 n 共用）
+function openNotePop() {
+  if (notePop.classList.contains('show')) { notePop.classList.remove('show'); return; }
+  if (renderNotePop()) {
+    notePop.classList.add('show');
+    document.getElementById('noteText').focus();
+  }
+}
+
+// 保存备注（空文本=删除）；更新缓存/下拉 ✎/备注条后关闭浮层
+async function saveNote() {
+  const s = FILTERED[Number(sel.value)];
+  if (!s) return;
+  const note = document.getElementById('noteText').value.trim();
+  const { res, data } = await postJSON('/api/notes', { code: s.code, date: s.trade_date, note });
+  if (!res.ok) { msg.textContent = data.error || '保存备注失败'; return; }
+  if (note) NOTES[sigKey(s)] = note; else delete NOTES[sigKey(s)];
+  const cur = Number(sel.value);   // 先存索引：重建下拉会重置选中项
+  rebuildSignalOptions();   // ✎ 标记跟随刷新
+  sel.value = String(cur);
+  renderKnote();
+  notePop.classList.remove('show');
+  msg.textContent = note ? '备注已保存' : '备注已删除';
+  setTimeout(() => { if (msg.textContent.startsWith('备注已')) msg.textContent = ''; }, 2000);
+}
+
+noteBtn.addEventListener('click', openNotePop);
+knoteEl.addEventListener('click', openNotePop);   // 点备注条直接编辑
+document.getElementById('noteSave').addEventListener('click', saveNote);
+
+// 点击浮层外部关闭（惯例同标记浮层）
+document.addEventListener('click', e => {
+  if (!notePop.classList.contains('show')) return;
+  if (notePop.contains(e.target) || noteBtn.contains(e.target) || knoteEl.contains(e.target)) return;
+  notePop.classList.remove('show');
+});
+
+// Esc 关闭弹层：独立监听器，不受「快捷键」开关/焦点在输入框限制（textarea 聚焦时也要能关）；
+// 一次关一层，按层级从高到低：使用说明弹窗 → 标记分组浮层 → 备注浮层
+document.addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (helpOpen()) { helpModal.style.display = 'none'; return; }
+  if (tagPop.classList.contains('show')) { tagPop.classList.remove('show'); return; }
+  if (notePop.classList.contains('show')) notePop.classList.remove('show');
 });
 
 // 页面加载后拉取信号清单+分组并默认查询第一个

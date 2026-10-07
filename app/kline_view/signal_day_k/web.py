@@ -20,6 +20,8 @@
                       信号被移出分组时级联清除指向该信号的分组书签）
     POST /api/bookmark  标记分组书签（JSON: group, code, date；书签只前进不后退）
     DELETE /api/bookmark 取消分组书签（JSON: group）
+    GET  /api/notes   备注清单（键 code|date，与分组无关全局共享）
+    POST /api/notes   保存备注（JSON: code, date, note；note 空白=删除该信号备注）
 """
 
 import bisect
@@ -112,6 +114,32 @@ def save_groups(data):
     with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
     os.replace(tmp, _GROUPS_JSON)
+
+
+# 信号备注持久化文件（本地配置，不入 git）；键为 code|date 与分组无关，全局共享
+_NOTES_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'notes.json')
+
+
+def load_notes():
+    """读备注（文件缺失/损坏回退空 dict，不报错）"""
+    if not os.path.exists(_NOTES_JSON):
+        return {}
+    try:
+        with open(_NOTES_JSON, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError('notes.json 结构异常')
+        return {str(k): str(v) for k, v in data.items() if str(v).strip()}
+    except Exception:
+        return {}
+
+
+def save_notes(data):
+    """落盘（先写临时文件再替换，避免写一半损坏）"""
+    tmp = _NOTES_JSON + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _NOTES_JSON)
 
 
 @app.route('/')
@@ -226,6 +254,31 @@ def api_bookmark():
     g['bookmarks'][group] = key
     save_groups(g)
     return jsonify({'ok': True, 'kept': False, 'key': key})
+
+
+@app.route('/api/notes', methods=['GET', 'POST'])
+def api_notes():
+    """信号备注：GET 全量清单 / POST 保存（note 空白=删除；键 code|date，与分组无关）"""
+    if request.method == 'GET':
+        return jsonify(load_notes())
+
+    data = request.get_json(silent=True) or {}
+    code = (data.get('code') or '').strip()
+    date = (data.get('date') or '').strip()
+    note = (data.get('note') or '').strip()
+    if not code or not date:
+        return jsonify({'error': '缺少 code/date 参数'}), 400
+    if len(note) > 2000:
+        return jsonify({'error': '备注最长 2000 字'}), 400
+
+    notes = load_notes()
+    key = f'{code}|{date}'
+    if note:
+        notes[key] = note
+    else:
+        notes.pop(key, None)
+    save_notes(notes)
+    return jsonify({'ok': True, 'deleted': not note})
 
 
 @app.route('/api/kline')
