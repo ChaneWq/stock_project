@@ -129,6 +129,12 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       <button id="next">下一个</button>
       <button id="btn">查询</button>
     </div>
+    <div class="zone">
+      <span class="zone-tag">交易日光标</span>
+      <button id="dayPrev">上一交易日</button>
+      <button id="dayNext">下一交易日</button>
+      <button id="dayHome" disabled>回到信号日</button>
+    </div>
     <div class="zone zone-gold">
       <span class="zone-tag">阅读书签</span>
       <button id="bmBtn" class="btn-gold">标记书签</button>
@@ -168,8 +174,7 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
         <input type="checkbox" id="hLineOn" checked style="accent-color:#f5a623">
       </div>
       <button id="helpBtn">使用说明</button>
-      <span class="tip">信号日：金色竖线+蜡烛金边；窗口修改即时生效，拖动滑块看全部数据</span>
-  </div>
+    </div>
   <div class="note" id="note"></div>
   <div class="msg" id="msg"></div>
 </div>
@@ -195,7 +200,8 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       · 图表下方备注条自动显示当前信号备注全文，点备注条 /「写备注」按钮 / 快捷键 n 编辑<br>
       · 有备注的信号下拉尾部带 ✎，「写备注」按钮金实底深色提示；清空内容保存即删除备注
       <b>【快捷键】</b>（跟随「快捷键」开关，焦点在输入框时无效）<br>
-      q=上一个　w=下一个　c=复制代码　n=写备注　r=切换快捷键开关（关闭后仍可按 r 重新开启）<br>
+      q=上一个信号　w=下一个信号　c=复制代码　n=写备注　r=切换快捷键开关（关闭后仍可按 r 重新开启）<br>
+      a=上一交易日　s=下一交易日　d=回到信号日（交易日光标越出可视窗口自动平移）<br>
       Esc=关闭弹窗/浮层（使用说明、标记分组、写备注；不受开关限制，输入框内也生效）
       <b>【图上标注】</b><br>
       金色竖线=信号日（「信号日线」开关）　金色虚线=信号日收盘价（「收盘价线」开关）<br>
@@ -221,6 +227,7 @@ const sel = document.getElementById('signal');
 const UP = '#e64545', DOWN = '#1dbf74';   // A股习惯：红涨绿跌
 const SIG = '#f5a623';                    // 信号日标注色（金）
 let KDATA = null;
+let curBar = 0;      // 交易日光标锚点（K线索引）：十字光标+数据面板位置，随鼠标/按钮/快捷键联动
 let SIGNALS = [];    // 全量信号（signals.csv 顺序）
 let GROUPS = [];     // 用户分组名列表（不含内置"全部"）
 let TAGS = {};       // 标记：{"code|date": ["组名", ...]}
@@ -482,6 +489,7 @@ function buildMarkData(d) {
 
 function render(d) {
   KDATA = d;
+  curBar = d.signal_index;   // 交易日光标锚点：切信号复位到信号日
   const sig = d.signal_index;
 
   // 信号日蜡烛金色描边；其余维持红涨绿跌
@@ -556,16 +564,19 @@ function render(d) {
 
   applyView();   // 按展示窗口设置定位（信号日前 n / 后 n）
   showBar(sig);  // 面板默认显示信号日
+  renderDayBtn();   // 「回到信号日」按钮态（锚点=信号日时置灰）
 }
 
-// 十字光标移动 → 刷新固定面板；移出图表 → 回到信号日
+// 十字光标移动 → 刷新固定面板；移出图表 → 回到当前锚点（初始为信号日，a/s/d 可移动锚点）
 chart.on('updateAxisPointer', function (event) {
   const info = event.axesInfo && event.axesInfo[0];
   if (!info) return;
-  showBar(Math.round(info.value));
+  curBar = Math.round(info.value);   // 锚点跟随鼠标，按键从鼠标位置续接
+  renderDayBtn();
+  showBar(curBar);
 });
 chart.getZr().on('globalout', function () {
-  if (KDATA) showBar(KDATA.signal_index);
+  if (KDATA) showBar(curBar);
 });
 
 sel.addEventListener('change', query);
@@ -654,6 +665,9 @@ document.addEventListener('keydown', e => {
   else if (e.key === 'w' || e.key === 'W') nextSignal();
   else if (e.key === 'c' || e.key === 'C') copyCode();
   else if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openNotePop(); }   // 阻止默认行为：否则n字符会落入随后聚焦的textarea
+  else if (e.key === 'a' || e.key === 'A') prevDay();
+  else if (e.key === 's' || e.key === 'S') nextDay();
+  else if (e.key === 'd' || e.key === 'D') backToSignal();
 });
 
 // 使用说明弹窗：点按钮打开，点 × 或遮罩关闭
@@ -915,6 +929,58 @@ document.addEventListener('keydown', e => {
   if (tagPop.classList.contains('show')) { tagPop.classList.remove('show'); return; }
   if (notePop.classList.contains('show')) notePop.classList.remove('show');
 });
+
+// ===================== 交易日光标 =====================
+// curBar 为光标锚点（十字光标+数据面板位置）：随鼠标联动，a/s/d/按钮驱动移动，切信号复位信号日
+const dayPrevBtn = document.getElementById('dayPrev');
+const dayNextBtn = document.getElementById('dayNext');
+const dayHomeBtn = document.getElementById('dayHome');
+
+// 「回到信号日」按钮态：锚点即信号日时置灰（惯例同跳书签）
+function renderDayBtn() {
+  dayHomeBtn.disabled = !KDATA || curBar === KDATA.signal_index;
+}
+
+// 光标越出可视窗口时窗口整体平移一根（按实际窗口算，手动拖过滑块也正确）
+function panWindowIfNeeded(i) {
+  const win = chart.getOption().dataZoom[0] || {};
+  const lo = win.startValue, hi = win.endValue;
+  if (lo == null || hi == null) return;
+  if (i >= lo && i <= hi) return;
+  const span = hi - lo;
+  const nl = i < lo ? i : i - span, nh = i < lo ? i + span : i;
+  chart.setOption({ dataZoom: [
+    { type: 'inside', xAxisIndex: [0, 1], startValue: nl, endValue: nh },
+    { type: 'slider', xAxisIndex: [0, 1], startValue: nl, endValue: nh },
+  ]});
+}
+
+// 移动光标到 i（clamp 数据范围）：十字光标(dispatchAction)+面板(showBar)同步移动，到头短暂提示
+function moveCursor(i) {
+  const d = KDATA;
+  if (!d) return;
+  i = Math.max(0, Math.min(d.count - 1, i));
+  if (i === curBar) {
+    msg.textContent = i === 0 ? '已是该股最早交易日' : '已是该股最新交易日';
+    setTimeout(() => { if (msg.textContent.startsWith('已是')) msg.textContent = ''; }, 2000);
+    return;
+  }
+  curBar = i;
+  panWindowIfNeeded(i);
+  // showTip 激活可视十字光标（竖线贯穿主副图+横线y标签；tooltip为空透明故弹框不可见）；
+  // updateAxisPointer dispatch 在多网格联动下只更新内部状态不渲染光标，故不用
+  chart.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: i });
+  showBar(i);   // 面板跟随（showTip 触发的事件链亦会刷新，双保险）
+  renderDayBtn();
+}
+
+function prevDay() { moveCursor(curBar - 1); }
+function nextDay() { moveCursor(curBar + 1); }
+function backToSignal() { if (KDATA) moveCursor(KDATA.signal_index); }
+
+dayPrevBtn.addEventListener('click', prevDay);
+dayNextBtn.addEventListener('click', nextDay);
+dayHomeBtn.addEventListener('click', backToSignal);
 
 // 页面加载后拉取信号清单+分组并默认查询第一个
 loadAll();
