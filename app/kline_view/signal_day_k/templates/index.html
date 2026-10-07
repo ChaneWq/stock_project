@@ -205,6 +205,7 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       Esc=关闭弹窗/浮层（使用说明、标记分组、写备注；不受开关限制，输入框内也生效）
       <b>【图上标注】</b><br>
       金色竖线=信号日（「信号日线」开关）　金色虚线=信号日收盘价（「收盘价线」开关）<br>
+      白色虚线=光标锚点收盘价（随上一/下一交易日/鼠标悬停移动，锚点=信号日时隐藏）<br>
       灰色点线=同股其它信号日　固定数据面板随十字光标刷新
     </div>
   </div>
@@ -482,9 +483,23 @@ function vLineEnabled() {
   return document.getElementById('vLineOn').checked;
 }
 
-// 主图 markLine 数据：竖线 + 开关控制的收盘价水平线
+// 主图 markLine 数据：竖线 + 开关控制的信号日收盘价线 + 光标锚点收盘价线
 function buildMarkData(d) {
-  return hLineEnabled() ? [...buildVLines(d), buildHLine(d)] : buildVLines(d);
+  const data = hLineEnabled() ? [...buildVLines(d), buildHLine(d)] : buildVLines(d);
+  // 光标收盘价线：白细虚线 y=锚点收盘价，右端价格标签（红K贴实体上沿/绿K下沿）；
+  // 锚点=信号日时隐藏（金色信号日虚线已在同价位，避免重叠）
+  if (curBar !== d.signal_index) {
+    const c = d.candle[curBar][1];
+    data.push({
+      yAxis: c,
+      lineStyle: { color: '#fff', type: 'dashed', width: 0.77 },
+      label: {
+        show: true, position: 'end', formatter: c.toFixed(2),
+        color: '#333', backgroundColor: '#fff', padding: [1, 4], borderRadius: 2, fontSize: 11,
+      },
+    });
+  }
+  return data;
 }
 
 function render(d) {
@@ -535,7 +550,8 @@ function render(d) {
     yAxis: [
       { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: '#333' } },
         axisLabel: { color: '#aaa' },
-        axisPointer: { show: true, label: { show: true } } },
+        // 内置横线指针隐藏：蜡烛图tooltip锚点在数据下沿，横线不指收盘价，由光标收盘价白线替代
+        axisPointer: { show: false } },
       { gridIndex: 1, axisLabel: { color: '#aaa', formatter: v => fmtVol(v) }, splitLine: { show: false },
         axisPointer: { show: false } },
     ],
@@ -571,9 +587,12 @@ function render(d) {
 chart.on('updateAxisPointer', function (event) {
   const info = event.axesInfo && event.axesInfo[0];
   if (!info) return;
-  curBar = Math.round(info.value);   // 锚点跟随鼠标，按键从鼠标位置续接
+  const i = Math.round(info.value);
+  if (i === curBar) return;
+  curBar = i;          // 锚点跟随鼠标，按键从鼠标位置续接
   renderDayBtn();
   showBar(curBar);
+  updateMarkLines();   // 光标收盘价白线跟随锚点
 });
 chart.getZr().on('globalout', function () {
   if (KDATA) showBar(curBar);
@@ -972,6 +991,7 @@ function moveCursor(i) {
   chart.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: i });
   showBar(i);   // 面板跟随（showTip 触发的事件链亦会刷新，双保险）
   renderDayBtn();
+  updateMarkLines();   // 光标收盘价白线跟随锚点
 }
 
 function prevDay() { moveCursor(curBar - 1); }
