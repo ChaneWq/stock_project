@@ -96,7 +96,7 @@
 - 数据走 `data_store.get_daily`（本地 SQLite 优先，缺失按请求深度自动回源回写）
 - 一键启动（demo 版）：`demo_day_k/demo.bat`，或 `python -m app.kline_view.demo_day_k.web`
 
-### signal_day_k — 信号日K线回看
+### signal_day_k — 信号复盘台
 
 - Flask Web 服务（端口 5004），信号清单在 `signals.csv`（列：code,trade_date，UTF-8 BOM，本地维护不入 git）
 - 展示信号日前 200 个交易日 ~ 后 20 个交易日的日K（共 221 根）；主图画线 MA7（红）/ZX短线趋势（白）/ZX牛熊线（黄）

@@ -1,4 +1,4 @@
-signal_day_k：信号日K线回看
+signal_day_k：信号复盘台
 
 读取 signals.csv（code,trade_date 信号日清单，本地维护不入 git），
 展示信号日前 200 个交易日 ~ 后 20 个交易日的日K线，
