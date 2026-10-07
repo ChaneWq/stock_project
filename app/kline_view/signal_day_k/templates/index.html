@@ -205,7 +205,8 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       Esc=关闭弹窗/浮层（使用说明、标记分组、写备注；不受开关限制，输入框内也生效）
       <b>【图上标注】</b><br>
       金色竖线=信号日（「信号日线」开关）　金色虚线=信号日收盘价（「收盘价线」开关）<br>
-      白色虚线=光标锚点收盘价（随上一/下一交易日/鼠标悬停移动，锚点=信号日时隐藏）<br>
+      鼠标悬停=自由十字光标（跟随鼠标，Y轴标签显示所指价位）<br>
+      按 a/s/d 切换交易日=十字交叉定位锚点K线收盘价（白色虚线+价格标签，锚点=信号日时隐藏）<br>
       灰色点线=同股其它信号日　固定数据面板随十字光标刷新
     </div>
   </div>
@@ -229,6 +230,7 @@ const UP = '#e64545', DOWN = '#1dbf74';   // A股习惯：红涨绿跌
 const SIG = '#f5a623';                    // 信号日标注色（金）
 let KDATA = null;
 let curBar = 0;      // 交易日光标锚点（K线索引）：十字光标+数据面板位置，随鼠标/按钮/快捷键联动
+let kbCursor = false; // 键盘/按钮光标模式：true=内置Y自由探测线隐藏（白线指收盘价），鼠标移动后恢复
 let SIGNALS = [];    // 全量信号（signals.csv 顺序）
 let GROUPS = [];     // 用户分组名列表（不含内置"全部"）
 let TAGS = {};       // 标记：{"code|date": ["组名", ...]}
@@ -486,9 +488,9 @@ function vLineEnabled() {
 // 主图 markLine 数据：竖线 + 开关控制的信号日收盘价线 + 光标锚点收盘价线
 function buildMarkData(d) {
   const data = hLineEnabled() ? [...buildVLines(d), buildHLine(d)] : buildVLines(d);
-  // 光标收盘价线：白细虚线 y=锚点收盘价，右端价格标签（红K贴实体上沿/绿K下沿）；
-  // 锚点=信号日时隐藏（金色信号日虚线已在同价位，避免重叠）
-  if (curBar !== d.signal_index) {
+  // 光标收盘价线：仅键盘/按钮光标模式显示（kbCursor），白细虚线 y=锚点收盘价+右端价格标签
+  // （红K贴实体上沿/绿K下沿），与showTip竖线交叉定位在收盘价；锚点=信号日时隐藏（金虚线同价位）
+  if (kbCursor && curBar !== d.signal_index) {
     const c = d.candle[curBar][1];
     data.push({
       yAxis: c,
@@ -505,6 +507,7 @@ function buildMarkData(d) {
 function render(d) {
   KDATA = d;
   curBar = d.signal_index;   // 交易日光标锚点：切信号复位到信号日
+  kbCursor = false;          // 重建后内置Y探测线随配置恢复开启，等待鼠标移动
   const sig = d.signal_index;
 
   // 信号日蜡烛金色描边；其余维持红涨绿跌
@@ -550,8 +553,8 @@ function render(d) {
     yAxis: [
       { scale: true, gridIndex: 0, splitLine: { lineStyle: { color: '#333' } },
         axisLabel: { color: '#aaa' },
-        // 内置横线指针隐藏：蜡烛图tooltip锚点在数据下沿，横线不指收盘价，由光标收盘价白线替代
-        axisPointer: { show: false } },
+        // 内置Y指针=鼠标自由探测线（标签随鼠标显示所指价位）；按a/s/d时动态隐藏（showTip锚点在数据下沿会错位），横线由白色收盘价线承担
+        axisPointer: { show: true, label: { show: true } } },
       { gridIndex: 1, axisLabel: { color: '#aaa', formatter: v => fmtVol(v) }, splitLine: { show: false },
         axisPointer: { show: false } },
     ],
@@ -596,6 +599,14 @@ chart.on('updateAxisPointer', function (event) {
 });
 chart.getZr().on('globalout', function () {
   if (KDATA) showBar(curBar);
+});
+// 内置Y轴自由探测线开关（合并setOption，不动缩放窗口）
+function setYProbe(show) {
+  chart.setOption({ yAxis: [{ axisPointer: { show } }] });
+}
+// 鼠标真实移动 → 退出键盘光标模式：恢复Y轴自由探测线，移除白色收盘价线（单十字原则）
+chart.getZr().on('mousemove', function () {
+  if (kbCursor) { kbCursor = false; setYProbe(true); if (KDATA) updateMarkLines(); }
 });
 
 sel.addEventListener('change', query);
@@ -986,7 +997,9 @@ function moveCursor(i) {
   }
   curBar = i;
   panWindowIfNeeded(i);
-  // showTip 激活可视十字光标（竖线贯穿主副图+横线y标签；tooltip为空透明故弹框不可见）；
+  // 键盘/按钮光标模式：隐藏内置Y自由探测线（showTip锚点在数据下沿会错位），横线由白色收盘价线承担
+  if (!kbCursor) { kbCursor = true; setYProbe(false); }
+  // showTip 激活可视十字光标（竖线贯穿主副图；tooltip为空透明故弹框不可见）；
   // updateAxisPointer dispatch 在多网格联动下只更新内部状态不渲染光标，故不用
   chart.dispatchAction({ type: 'showTip', seriesIndex: 0, dataIndex: i });
   showBar(i);   // 面板跟随（showTip 触发的事件链亦会刷新，双保险）
