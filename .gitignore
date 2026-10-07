@@ -43,6 +43,7 @@ Thumbs.db
 # 本地配置（不推送）
 app/stock_monitor/stocks.csv
 app/kline_view/signal_day_k/signals.csv
+app/kline_view/signal_day_k/groups.json
 app/kline_view/train_mode_day_k/signals.csv
 app/kline_view/train_mode_day_k/train_history.json
 app/database/feature_import/config.ini

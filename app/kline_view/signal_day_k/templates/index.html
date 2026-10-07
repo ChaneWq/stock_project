@@ -34,6 +34,18 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
 .sig-tag-other { background: #c0c4cc; color: #fff; border-radius: 3px; padding: 0 6px; }
 .note { margin-top: 8px; font-size: 13px; color: #b8860b; min-height: 0; }
 .msg { margin-top: 8px; font-size: 13px; color: #e64545; min-height: 18px; }
+#group { min-width: 140px; }
+/* 标记分组浮层：锚定在标记按钮下方，点击外部关闭 */
+.tag-wrap { position: relative; }
+.tag-pop { display: none; position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
+  background: #fff; border: 1px solid #dcdfe6; border-radius: 6px; padding: 10px 12px; width: 250px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.15); text-align: left; }
+.tag-pop.show { display: block; }
+.tag-pop-title { font-size: 13px; font-weight: bold; margin-bottom: 6px; color: #333; }
+.tag-item { display: block; padding: 4px 2px; font-size: 13px; color: #333; cursor: pointer; user-select: none; }
+.tag-empty { font-size: 12px; color: #909399; padding: 4px 2px; }
+.tag-new { display: block; margin-top: 8px; padding-top: 8px; border-top: 1px dashed #dcdfe6;
+  color: #409eff; font-size: 13px; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -41,6 +53,12 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
 <h1>信号日K线回看（前200 / 后20 交易日）</h1>
 <div class="panel">
   <div class="form-row">
+    <div class="form-item">
+      <label>分组</label>
+      <select id="group"></select>
+    </div>
+    <button id="addGroup">＋建组</button>
+    <button id="delGroup">删组</button>
     <div class="form-item">
       <label>信号</label>
       <select id="signal"></select>
@@ -53,6 +71,14 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
     </div>
     <button id="next">下一个</button>
     <button id="btn">查询</button>
+    <div class="form-item tag-wrap">
+      <button id="tagBtn">标记分组</button>
+      <div class="tag-pop" id="tagPop">
+        <div class="tag-pop-title" id="tagPopTitle"></div>
+        <div id="tagList"></div>
+        <a class="tag-new" id="tagNew">＋ 新建分组并标记</a>
+      </div>
+    </div>
     <div class="form-item">
       <label>展示</label>
       <input type="number" id="viewBefore" value="200" min="0" max="200" style="width:66px">
@@ -94,7 +120,12 @@ const sel = document.getElementById('signal');
 const UP = '#e64545', DOWN = '#1dbf74';   // A股习惯：红涨绿跌
 const SIG = '#f5a623';                    // 信号日标注色（金）
 let KDATA = null;
-let SIGNALS = [];
+let SIGNALS = [];    // 全量信号（signals.csv 顺序）
+let GROUPS = [];     // 用户分组名列表（不含内置"全部"）
+let TAGS = {};       // 标记：{"code|date": ["组名", ...]}
+let FILTERED = [];   // 当前分组过滤后的信号（下拉/序号/上下键均基于此）
+let curGroup = '全部';
+const sigKey = s => s.code + '|' + s.trade_date;
 const PLOT_KEYS = ['ma7', 'zx_short_term_trend', 'zx_bull_bear_line'];  // 主图画线的指标
 // 固定面板显示值的指标（不画线）：量涨跌幅=量环比%、MA斜率=MA7较上一交易日环比%、MA7偏离度=BIAS%
 const VALUE_KEYS = [...PLOT_KEYS, 'vol_pct', 'ma7_slope', 'bias7'];
@@ -139,39 +170,86 @@ function showBar(i) {
     `<div>${mas}</div>`;
 }
 
-async function loadSignals() {
+// 分组内信号数（"全部"= 清单总数）
+function groupCount(name) {
+  if (name === '全部') return SIGNALS.length;
+  return SIGNALS.filter(s => (TAGS[sigKey(s)] || []).includes(name)).length;
+}
+
+// 渲染分组下拉（带数量）；选中"全部"时删组按钮禁用
+function renderGroupSel() {
+  const g = document.getElementById('group');
+  g.innerHTML = ['全部', ...GROUPS].map(n =>
+    `<option value="${n}">${n} (${groupCount(n)})</option>`).join('');
+  g.value = curGroup;
+  document.getElementById('delGroup').disabled = (curGroup === '全部');
+}
+
+// 重建信号下拉选项（已标记的附分组名，便于识别）
+function rebuildSignalOptions() {
+  sel.innerHTML = FILTERED.map((s, i) => {
+    const gs = TAGS[sigKey(s)] || [];
+    return `<option value="${i}">${s.code}　${s.trade_date}${gs.length ? '　[' + gs.join(',') + ']' : ''}</option>`;
+  }).join('');
+}
+
+// 应用分组过滤：当前信号仍在组内则保持选中，否则跳组内第一个；组空则提示
+function applyGroupFilter() {
+  const prev = FILTERED[Number(sel.value)];
+  const curKey = prev ? sigKey(prev) : null;
+  FILTERED = curGroup === '全部' ? SIGNALS.slice()
+    : SIGNALS.filter(s => (TAGS[sigKey(s)] || []).includes(curGroup));
+  rebuildSignalOptions();
+  document.getElementById('posTotal').textContent = `/ ${FILTERED.length}`;
+  if (!FILTERED.length) {
+    msg.textContent = `分组「${curGroup}」暂无信号，请先标记个股`;
+    return;
+  }
+  let i = curKey ? FILTERED.findIndex(s => sigKey(s) === curKey) : -1;
+  if (i < 0) i = 0;
+  sel.value = String(i);
+  query();
+}
+
+async function loadAll() {
   try {
-    const res = await fetch('/api/signals');
-    const list = await res.json();
-    if (!res.ok || !Array.isArray(list) || !list.length) {
+    const [sigRes, grpRes] = await Promise.all([fetch('/api/signals'), fetch('/api/groups')]);
+    const list = await sigRes.json();
+    if (!sigRes.ok || !Array.isArray(list) || !list.length) {
       msg.textContent = (list && list.error) || 'signals.csv 为空或不存在';
       return;
     }
     SIGNALS = list;
-    sel.innerHTML = SIGNALS.map((s, i) =>
-      `<option value="${i}">${s.code}　${s.trade_date}</option>`).join('');
-    document.getElementById('posTotal').textContent = `/ ${SIGNALS.length}`;
-    query();
+    if (grpRes.ok) {
+      const gd = await grpRes.json();
+      GROUPS = gd.groups || [];
+      TAGS = gd.tags || {};
+    }
+    renderGroupSel();
+    applyGroupFilter();   // 默认"全部"，查询第一个信号
   } catch (e) {
     msg.textContent = '加载信号清单失败：' + e.message;
   }
 }
 
 // 全量预热：环形预取清单中所有信号（串行 + 间隔限速防封IP；已预取过的跳过）
+// 缓存键用 code|date（与分组过滤无关），切组后无需重复预取
 const PREFETCH_INTERVAL = 500;   // 每条预取间隔（毫秒），温和限速
-const prefetched = new Set();    // 页面生命周期内已预取的信号索引
+const prefetched = new Set();    // 页面生命周期内已预取的信号（code|date）
 let prefetching = false;
 
 async function prefetchAll() {
   if (SIGNALS.length < 2 || prefetching) return;
   prefetching = true;
   try {
+    const cur = FILTERED[Number(sel.value)];
+    const start = cur ? SIGNALS.findIndex(s => sigKey(s) === sigKey(cur)) : 0;
     for (let step = 1; step < SIGNALS.length; step++) {
-      const idx = (Number(sel.value) + step) % SIGNALS.length;
-      if (prefetched.has(idx)) continue;
-      const s = SIGNALS[idx];
+      const s = SIGNALS[(start + step) % SIGNALS.length];
+      const key = sigKey(s);
+      if (prefetched.has(key)) continue;
       await fetch(`/api/kline?code=${s.code}&date=${s.trade_date}`).catch(() => {});
-      prefetched.add(idx);
+      prefetched.add(key);
       await new Promise(r => setTimeout(r, PREFETCH_INTERVAL));
     }
   } finally {
@@ -181,11 +259,11 @@ async function prefetchAll() {
 
 // 序号跳转：输入第 n 个（1 开始），clamp 到 [1, N] 后切换；非法输入回退当前序号
 function jumpTo() {
-  if (!SIGNALS.length) return;
+  if (!FILTERED.length) return;
   const pos = document.getElementById('posNum');
   let n = parseInt(pos.value, 10);
   if (isNaN(n)) { pos.value = String(Number(sel.value) + 1); return; }
-  n = Math.max(1, Math.min(SIGNALS.length, n));
+  n = Math.max(1, Math.min(FILTERED.length, n));
   pos.value = String(n);
   sel.value = String(n - 1);
   query();
@@ -197,7 +275,7 @@ function syncPos() {
 }
 
 async function query() {
-  const s = SIGNALS[sel.value];
+  const s = FILTERED[sel.value];
   if (!s) return;
   const btn = document.getElementById('btn');
   msg.textContent = '';
@@ -212,6 +290,7 @@ async function query() {
     msg.textContent = `${data.code} 共 ${data.count} 个交易日（${data.dates[0]} ~ ${data.dates[data.count-1]}）`;
     if (data.note) noteEl.textContent = '提示：' + data.note;
     syncPos();       // 序号框跟随当前信号
+    if (tagPop.classList.contains('show')) renderTagPop();   // 标记浮层开着时跟随切换信号
     prefetchAll();   // 当前图渲染完成后，后台串行预热全部信号数据
   } catch (e) {
     msg.textContent = '请求失败：' + e.message;
@@ -392,15 +471,15 @@ const posNum = document.getElementById('posNum');
 posNum.addEventListener('change', jumpTo);
 posNum.addEventListener('keydown', e => { if (e.key === 'Enter') jumpTo(); });
 document.getElementById('btn').addEventListener('click', query);
-// 上一个/下一个：按钮点击与键盘快捷键（q/w）共用
+// 上一个/下一个：按钮点击与键盘快捷键（q/w）共用，均基于当前分组过滤结果
 function prevSignal() {
-  if (!SIGNALS.length) return;
-  sel.value = String((Number(sel.value) - 1 + SIGNALS.length) % SIGNALS.length);
+  if (!FILTERED.length) return;
+  sel.value = String((Number(sel.value) - 1 + FILTERED.length) % FILTERED.length);
   query();
 }
 function nextSignal() {
-  if (!SIGNALS.length) return;
-  sel.value = String((Number(sel.value) + 1) % SIGNALS.length);
+  if (!FILTERED.length) return;
+  sel.value = String((Number(sel.value) + 1) % FILTERED.length);
   query();
 }
 document.getElementById('prev').addEventListener('click', prevSignal);
@@ -446,8 +525,117 @@ document.addEventListener('keydown', e => {
   else if (e.key === 'c' || e.key === 'C') copyCode();
 });
 
-// 页面加载后拉取信号清单并默认查询第一个
-loadSignals();
+// ===================== 分组管理 =====================
+// 切换分组：过滤重建信号下拉（当前信号在组内则保持，否则跳组内第一个）
+document.getElementById('group').addEventListener('change', e => {
+  curGroup = e.target.value;
+  renderGroupSel();
+  applyGroupFilter();
+});
+
+// JSON POST 公共封装
+async function postJSON(url, body, method = 'POST') {
+  const res = await fetch(url, {
+    method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  return { res, data: await res.json().catch(() => ({})) };
+}
+
+// 新建分组（不切换当前视图，新组出现在下拉中数量为 0）
+async function createGroup(name) {
+  const { res, data } = await postJSON('/api/groups', { name });
+  if (!res.ok) { msg.textContent = data.error || '创建分组失败'; return false; }
+  if (!GROUPS.includes(name)) GROUPS.push(name);
+  renderGroupSel();
+  return true;
+}
+
+document.getElementById('addGroup').addEventListener('click', async () => {
+  const name = (prompt('请输入新分组名称：') || '').trim();
+  if (!name) return;
+  if (await createGroup(name)) msg.textContent = `已创建分组「${name}」，可在「标记分组」中勾选个股`;
+});
+
+// 删除分组：清理该组全部标记；删的是当前选中组则切回"全部"
+document.getElementById('delGroup').addEventListener('click', async () => {
+  if (curGroup === '全部') return;
+  if (!confirm(`确定删除分组「${curGroup}」？该组内所有标记将一并清除。`)) return;
+  const name = curGroup;
+  const { res, data } = await postJSON('/api/groups', { name }, 'DELETE');
+  if (!res.ok) { msg.textContent = data.error || '删除分组失败'; return; }
+  GROUPS = GROUPS.filter(g => g !== name);
+  for (const k of Object.keys(TAGS)) {
+    TAGS[k] = TAGS[k].filter(g => g !== name);
+    if (!TAGS[k].length) delete TAGS[k];
+  }
+  curGroup = '全部';
+  renderGroupSel();
+  applyGroupFilter();
+  msg.textContent = `已删除分组「${name}」`;
+});
+
+// ===================== 标记分组浮层 =====================
+const tagBtn = document.getElementById('tagBtn');
+const tagPop = document.getElementById('tagPop');
+
+// 渲染浮层：当前信号（code+日期）× 所有分组复选框
+function renderTagPop() {
+  const s = FILTERED[Number(sel.value)];
+  if (!s) return false;
+  const marked = TAGS[sigKey(s)] || [];
+  document.getElementById('tagPopTitle').textContent = `${s.code}　${s.trade_date}`;
+  document.getElementById('tagList').innerHTML = GROUPS.length
+    ? GROUPS.map(g => `<label class="tag-item"><input type="checkbox" data-g="${g}"${marked.includes(g) ? ' checked' : ''}> ${g}</label>`).join('')
+    : '<div class="tag-empty">暂无分组，请先新建</div>';
+  return true;
+}
+
+// 保存当前勾选（整体替换该信号的分组归属）
+async function saveTags() {
+  const s = FILTERED[Number(sel.value)];
+  if (!s) return;
+  const groups = [...document.querySelectorAll('#tagList input:checked')].map(i => i.dataset.g);
+  const { res, data } = await postJSON('/api/tags', { code: s.code, date: s.trade_date, groups });
+  if (!res.ok) { msg.textContent = data.error || '保存标记失败'; return; }
+  if (groups.length) TAGS[sigKey(s)] = groups; else delete TAGS[sigKey(s)];
+  renderGroupSel();   // 分组数量即时刷新
+  if (curGroup !== '全部' && !groups.includes(curGroup)) {
+    applyGroupFilter();   // 当前信号被移出当前组 → 跳组内第一个
+  } else {
+    rebuildSignalOptions();   // 仍在当前视图：仅刷新选项上的分组标签
+    sel.value = String(Number(sel.value));
+  }
+}
+
+tagBtn.addEventListener('click', () => {
+  if (tagPop.classList.contains('show')) { tagPop.classList.remove('show'); return; }
+  if (renderTagPop()) tagPop.classList.add('show');
+});
+
+// 勾选/取消即时保存（事件委托）
+document.getElementById('tagList').addEventListener('change', saveTags);
+
+// 浮层内快捷建组：创建后自动勾选并保存到当前信号
+document.getElementById('tagNew').addEventListener('click', async () => {
+  const name = (prompt('请输入新分组名称：') || '').trim();
+  if (!name) return;
+  if (await createGroup(name)) {
+    if (renderTagPop()) {
+      const cb = document.querySelector(`#tagList input[data-g="${name}"]`);
+      if (cb) { cb.checked = true; saveTags(); }
+    }
+  }
+});
+
+// 点击浮层外部关闭
+document.addEventListener('click', e => {
+  if (!tagPop.classList.contains('show')) return;
+  if (tagPop.contains(e.target) || tagBtn.contains(e.target)) return;
+  tagPop.classList.remove('show');
+});
+
+// 页面加载后拉取信号清单+分组并默认查询第一个
+loadAll();
 </script>
 </body>
 </html>

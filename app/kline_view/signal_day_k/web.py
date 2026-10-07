@@ -13,9 +13,14 @@
     GET  /            渲染页面
     GET  /api/signals 信号清单（读 signals.csv，保持文件顺序）
     GET  /api/kline   查询参数：code + date（信号日 YYYY-MM-DD）
+    GET  /api/groups  分组与标记清单
+    POST /api/groups  创建分组（JSON: name）
+    DELETE /api/groups 删除分组（JSON: name，同时清理该组全部标记）
+    POST /api/tags    标记信号归属分组（JSON: code, date, groups[]，整体替换）
 """
 
 import bisect
+import json
 import os
 import sys
 
@@ -69,6 +74,35 @@ def load_signals():
     return df.to_dict('records')
 
 
+# 分组与标记持久化文件（本地配置，不入 git）；"全部"为内置虚拟分组不落文件
+_GROUPS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'groups.json')
+
+
+def load_groups():
+    """读分组与标记（文件缺失/损坏回退空结构，不报错）"""
+    if not os.path.exists(_GROUPS_JSON):
+        return {'groups': [], 'tags': {}}
+    try:
+        with open(_GROUPS_JSON, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            raise ValueError('groups.json 结构异常')
+        groups = [str(g) for g in data.get('groups', [])]
+        tags = {str(k): [str(g) for g in v if g in groups]
+                for k, v in data.get('tags', {}).items() if isinstance(v, list)}
+        return {'groups': groups, 'tags': {k: v for k, v in tags.items() if v}}
+    except Exception:
+        return {'groups': [], 'tags': {}}
+
+
+def save_groups(data):
+    """落盘（先写临时文件再替换，避免写一半损坏）"""
+    tmp = _GROUPS_JSON + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _GROUPS_JSON)
+
+
 @app.route('/')
 def index():
     """K线图页面"""
@@ -82,6 +116,63 @@ def api_signals():
         return jsonify(load_signals())
     except Exception as e:
         return jsonify({'error': f'读取 signals.csv 失败：{e}'}), 500
+
+
+@app.route('/api/groups', methods=['GET', 'POST', 'DELETE'])
+def api_groups():
+    """分组管理：GET 清单 / POST 创建 / DELETE 删除（连带清理标记）"""
+    if request.method == 'GET':
+        return jsonify(load_groups())
+
+    data = request.get_json(silent=True) or {}
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'error': '分组名不能为空'}), 400
+    if name == '全部':
+        return jsonify({'error': '"全部"为内置分组，不能创建或删除'}), 400
+
+    g = load_groups()
+    if request.method == 'POST':
+        if name in g['groups']:
+            return jsonify({'error': f'分组「{name}」已存在'}), 400
+        g['groups'].append(name)
+        save_groups(g)
+        return jsonify({'ok': True})
+
+    # DELETE：删除分组并清理所有信号上该组标记
+    if name not in g['groups']:
+        return jsonify({'error': f'分组「{name}」不存在'}), 404
+    g['groups'].remove(name)
+    g['tags'] = {k: [t for t in v if t != name] for k, v in g['tags'].items()}
+    g['tags'] = {k: v for k, v in g['tags'].items() if v}
+    save_groups(g)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/tags', methods=['POST'])
+def api_tags():
+    """标记信号（code+date）归属分组（groups 列表整体替换，空列表=取消全部标记）"""
+    data = request.get_json(silent=True) or {}
+    code = (data.get('code') or '').strip()
+    date = (data.get('date') or '').strip()
+    groups = data.get('groups')
+    if not code or not date:
+        return jsonify({'error': '缺少 code/date 参数'}), 400
+    if not isinstance(groups, list):
+        return jsonify({'error': 'groups 须为数组'}), 400
+
+    g = load_groups()
+    unknown = [x for x in groups if x not in g['groups']]
+    if unknown:
+        return jsonify({'error': f'分组不存在：{",".join(unknown)}'}), 400
+
+    key = f'{code}|{date}'
+    if groups:
+        g['tags'][key] = groups
+    else:
+        g['tags'].pop(key, None)
+    save_groups(g)
+    return jsonify({'ok': True})
 
 
 @app.route('/api/kline')
