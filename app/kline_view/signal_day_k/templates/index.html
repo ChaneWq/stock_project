@@ -191,7 +191,8 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       <b>【分组与标记】</b><br>
       · ＋建组 / 删组：删组会一并清除该组全部标记与书签；「全部」为内置分组不可删<br>
       · 标记分组：按信号（代码+信号日）勾选归属，一条信号可属多个分组，同股不同信号日可归不同组<br>
-      · 选中分组后：信号下拉 / 序号 / 上一个下一个 / q/w 均按该组过滤；下拉选项尾部 [组名] 为已标记提示
+      · 取消勾选分组/取消书签时弹出确认（进度与标记不因误触丢失），勾选/标记书签无需确认<br>
+      · 选中分组后：信号下拉 / 序号 / 上一个下一个 / w/e 均按该组过滤；下拉选项尾部 [组名] 为已标记提示
       <b>【书签（阅读进度）】</b><br>
       · 每组一个书签，只前进不后退；「跳书签」回看书签信号，下拉中 ★ 即书签位置<br>
       · 进入分组视图自动定位到书签的下一条（未读首条，末尾循环），点「下一个」接着轮询
@@ -200,8 +201,8 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       · 图表下方备注条自动显示当前信号备注全文，点备注条 /「写备注」按钮 / 快捷键 n 编辑<br>
       · 有备注的信号下拉尾部带 ✎，「写备注」按钮金实底深色提示；清空内容保存即删除备注
       <b>【快捷键】</b>（跟随「快捷键」开关，焦点在输入框时无效）<br>
-      q=上一个信号　w=下一个信号　c=复制代码　n=写备注　r=切换快捷键开关（关闭后仍可按 r 重新开启）<br>
-      a=上一交易日　s=下一交易日　d=回到信号日（交易日光标越出可视窗口自动平移）<br>
+      w=上一个信号　e=下一个信号　c=复制代码　n=写备注　r=切换快捷键开关（关闭后仍可按 r 重新开启）<br>
+      s=上一交易日　d=下一交易日　a=回到信号日（交易日光标越出可视窗口自动平移）<br>
       Esc=关闭弹窗/浮层（使用说明、标记分组、写备注；不受开关限制，输入框内也生效）
       <b>【图上标注】</b><br>
       金色竖线=信号日（「信号日线」开关）　金色虚线=信号日收盘价（「收盘价线」开关）<br>
@@ -672,8 +673,8 @@ async function copyCode() {
   setTimeout(() => { if (msg.textContent.includes('剪贴板') || msg.textContent === '复制失败') msg.textContent = ''; }, 2000);
 }
 
-// 键盘快捷键：q=上一个 w=下一个 c=复制代码 r=切换快捷键开关；
-// 开关关闭或焦点在输入控件时忽略 q/w/c（避免打字误触发）；r 不受开关限制（关闭后可按 r 重新开启）；
+// 键盘快捷键：w=上一个 e=下一个 s/d=上一/下一交易日 a=回信号日 c=复制代码 n=写备注 r=切换快捷键开关；
+// 开关关闭或焦点在输入控件时忽略 w/e/c 等快捷键（避免打字误触发）；r 不受开关限制（关闭后可按 r 重新开启）；
 // 使用说明弹窗打开时全部快捷键失效（惯例同 train_mode_day_k）
 const helpModal = document.getElementById('helpModal');
 function helpOpen() { return helpModal.style.display !== 'none'; }
@@ -691,13 +692,13 @@ document.addEventListener('keydown', e => {
   if (['INPUT', 'SELECT', 'TEXTAREA'].includes(tag) || helpOpen()) return;
   if (e.key === 'r' || e.key === 'R') { toggleHotkey(); return; }
   if (!hotkeyEnabled()) return;
-  if (e.key === 'q' || e.key === 'Q') prevSignal();
-  else if (e.key === 'w' || e.key === 'W') nextSignal();
+  if (e.key === 'w' || e.key === 'W') prevSignal();
+  else if (e.key === 'e' || e.key === 'E') nextSignal();
   else if (e.key === 'c' || e.key === 'C') copyCode();
   else if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openNotePop(); }   // 阻止默认行为：否则n字符会落入随后聚焦的textarea
-  else if (e.key === 'a' || e.key === 'A') prevDay();
-  else if (e.key === 's' || e.key === 'S') nextDay();
-  else if (e.key === 'd' || e.key === 'D') backToSignal();
+  else if (e.key === 's' || e.key === 'S') prevDay();
+  else if (e.key === 'd' || e.key === 'D') nextDay();
+  else if (e.key === 'a' || e.key === 'A') backToSignal();
 });
 
 // 使用说明弹窗：点按钮打开，点 × 或遮罩关闭
@@ -794,8 +795,19 @@ tagBtn.addEventListener('click', () => {
   if (renderTagPop()) tagPop.classList.add('show');
 });
 
-// 勾选/取消即时保存（事件委托）
-document.getElementById('tagList').addEventListener('change', saveTags);
+// 勾选即时保存；取消勾选需二次确认——防误触移除标记（连带清组书签丢失阅读进度），
+// 用户取消则恢复勾选不保存；标记书签按钮不走此确认
+document.getElementById('tagList').addEventListener('change', e => {
+  const cb = e.target;
+  if (cb.tagName !== 'INPUT') return;
+  if (!cb.checked) {
+    const g = cb.dataset.g;
+    const s = FILTERED[Number(sel.value)];
+    const bmHit = s && BOOKMARKS[g] === sigKey(s) ? `\n指向该信号的「${g}」书签将一并清除！` : '';
+    if (!confirm(`确认取消标记「${g}」？${bmHit}`)) { cb.checked = true; return; }
+  }
+  saveTags();
+});
 
 // 浮层内快捷建组：创建后自动勾选并保存到当前信号
 document.getElementById('tagNew').addEventListener('click', async () => {
@@ -848,6 +860,8 @@ bmBtn.addEventListener('click', async () => {
   const s = FILTERED[Number(sel.value)];
   if (!s) return;
   if (BOOKMARKS[curGroup] === sigKey(s)) {
+    // 取消书签=丢弃阅读进度，二次确认防误触（标记书签不需确认）
+    if (!confirm(`确认取消分组「${curGroup}」的书签？\n当前阅读进度将被清除。`)) return;
     const { res, data } = await postJSON('/api/bookmark', { group: curGroup }, 'DELETE');
     if (!res.ok) { msg.textContent = data.error || '取消书签失败'; return; }
     delete BOOKMARKS[curGroup];
