@@ -55,8 +55,16 @@
             z-index: 1;
         }
         th:hover { background: #ececec; }
-        th.asc::after { content: " ▲"; color: #1a73e8; }
-        th.desc::after { content: " ▼"; color: #1a73e8; }
+        /* 所有表头预留排序箭头位置（透明占位），避免点击排序时该列变宽、后续列平移 */
+        th::after {
+            content: "▲";
+            display: inline-block;
+            width: 1em;
+            text-align: center;
+            color: transparent;
+        }
+        th.asc::after { color: #1a73e8; }
+        th.desc::after { content: "▼"; color: #1a73e8; }
         td.code, td.name { text-align: left; }
         .num-up { color: #e74c3c; }
         .num-down { color: #27ae60; }
@@ -71,12 +79,34 @@
         /* 平均值统计行 */
         .avg-row td { background: #f0f7ff; font-weight: 600; }
         .avg-row td.avg-label { color: #1a73e8; text-align: left; }
+        /* 历史模式徽标与日期控件 */
+        .badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            background: #fff3e0;
+            color: #e65100;
+            font-size: 13px;
+            font-weight: 600;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+        .hidden { display: none; }
+        input[type="date"] {
+            padding: 4px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 13px;
+        }
     </style>
 </head>
 <body>
-    <h1>个股监控看板</h1>
+    <h1>个股监控看板<span id="mode-badge" class="badge hidden"></span></h1>
     <div class="toolbar">
         <button id="refresh-btn">刷新数据</button>
+        <input type="date" id="date-input">
+        <button id="date-query-btn">查询历史</button>
+        <button id="back-realtime-btn" class="hidden">返回实时</button>
         <label><input type="checkbox" id="auto-toggle" checked> 自动刷新</label>
         <label>间隔 <input type="number" id="interval-input" value="5" min="1" max="3600"> 秒</label>
         <label><input type="checkbox" id="avg-toggle"> 显示平均值</label>
@@ -89,7 +119,7 @@
     </table>
     <div class="meta">
         <div id="updated"></div>
-        <div class="hint">提示：点击表头排序；拖拽表头可调整列顺序；点击上方分类切换列表；勾选「显示平均值」查看各列均值</div>
+        <div class="hint">提示：点击表头排序；拖拽表头可调整列顺序；选择日期点「查询历史」可查看指定交易日（历史模式暂停自动刷新，点「返回实时」恢复）；点击上方分类切换列表；勾选「显示平均值」查看各列均值</div>
     </div>
 
     <script>
@@ -122,6 +152,14 @@
         let countdown = intervalSec;
         let timer = null;
         let loading = false;
+
+        // ===== 历史查询状态 =====
+        // 服务端渲染注入的初始查询日期（YYYYMMDD 或空串），null 表示实时模式
+        const INITIAL_DATE = {{ (query_date or '') | tojson }};
+        function toDateDash(s) {
+            return s ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}` : null;
+        }
+        let queryDate = toDateDash(INITIAL_DATE);
 
         // ===== 分类处理 =====
         const UNCATEGORIZED = '未分类';
@@ -334,7 +372,10 @@
             loading = true;
             updateStatus();
             try {
-                const resp = await fetch('/api/data');
+                const url = queryDate
+                    ? '/api/data?date=' + encodeURIComponent(queryDate)
+                    : '/api/data';
+                const resp = await fetch(url);
                 const data = await resp.json();
                 allRows = data;
                 // 刷新后保持当前 tab，重新渲染（排序状态保留）
@@ -362,7 +403,8 @@
             autoOn = true;
             countdown = intervalSec;
             timer = setInterval(() => {
-                if (loading) return;
+                // 历史模式数据不变，不自动刷新
+                if (loading || queryDate) return;
                 countdown--;
                 if (countdown <= 0) {
                     refreshData();
@@ -381,11 +423,30 @@
             const el = document.getElementById('status');
             if (loading) {
                 el.textContent = '加载中...';
+            } else if (queryDate) {
+                el.textContent = `历史模式：${queryDate}（不自动刷新）`;
             } else if (autoOn) {
                 el.textContent = `下次刷新：${countdown}s`;
             } else {
                 el.textContent = '已暂停';
             }
+        }
+
+        // ===== 历史模式 UI 状态 =====
+        function updateModeUI() {
+            const badge = document.getElementById('mode-badge');
+            const backBtn = document.getElementById('back-realtime-btn');
+            const dateInput = document.getElementById('date-input');
+            if (queryDate) {
+                badge.textContent = '历史：' + queryDate;
+                badge.classList.remove('hidden');
+                backBtn.classList.remove('hidden');
+                if (!dateInput.value) dateInput.value = queryDate;
+            } else {
+                badge.classList.add('hidden');
+                backBtn.classList.add('hidden');
+            }
+            updateStatus();
         }
 
         function setUpdated() {
@@ -395,6 +456,20 @@
 
         // ===== 工具栏事件 =====
         document.getElementById('refresh-btn').addEventListener('click', () => {
+            refreshData();
+        });
+        // 查询历史日期（输入为空则回到实时）
+        document.getElementById('date-query-btn').addEventListener('click', () => {
+            const v = document.getElementById('date-input').value;
+            queryDate = v || null;
+            updateModeUI();
+            refreshData();
+        });
+        // 返回实时模式
+        document.getElementById('back-realtime-btn').addEventListener('click', () => {
+            queryDate = null;
+            document.getElementById('date-input').value = '';
+            updateModeUI();
             refreshData();
         });
         document.getElementById('auto-toggle').addEventListener('change', e => {
@@ -414,6 +489,15 @@
         });
 
         // ===== 初始化 =====
+        (function initDateMode() {
+            const dateInput = document.getElementById('date-input');
+            const now = new Date();
+            const pad = n => String(n).padStart(2, '0');
+            // 日期选择上限 = 今天
+            dateInput.max = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+            if (queryDate) dateInput.value = queryDate;
+            updateModeUI();
+        })();
         renderAll();
         setUpdated();
         startAuto();
