@@ -21,6 +21,10 @@
     - 昨收优先取 BasicMinutesWithVR.get_prev_close()，取不到时用日线第 2 行 close 兜底
     - 当日非交易日或分时获取失败时，分时相关字段为 None（前端显示 -），日线字段仍展示
     - 单只采集异常不中断整体流程
+    - 历史模式（date 非当日）：字段口径切换为目标日收盘语义
+        最新价格 = 目标日 close；涨幅 = (目标日 close - 前一交易日 close) / 前收
+        量比/9:30/9:31 = 目标日分时；ma7 = 截至（含）目标日的 7 日均线
+        非交易日输入自动回退到目标日前最近的交易日（按各股日线独立回退）
 """
 
 import time
@@ -31,7 +35,7 @@ from datetime import datetime
 
 from pystock_data import BasicBars, BasicMinutesWithVR, MAIndicator
 
-from .config import BATCH_SIZE, BATCH_INTERVAL, DAILY_CACHE_ENABLED, MAX_WORKERS
+from .config import BATCH_SIZE, BATCH_INTERVAL, DAILY_CACHE_ENABLED, MAX_WORKERS, MINUTES_CACHE_ENABLED
 
 
 # 日线数据缓存：key=(code, date_str)，value=daily_df
@@ -76,6 +80,43 @@ def clear_daily_cache():
         _daily_cache.clear()
 
 
+# 历史分时缓存：key=(code, date, n)，value=vr_df
+# 仅历史模式使用（历史分时数据不会变化，重复查询同日期免网络请求）
+# 只缓存非空结果（空结果可能是临时失败或超出通达信可取范围，不缓存避免污染）
+# 实时模式不走此缓存（分时盘中持续变化）
+_minutes_cache = {}
+_minutes_lock = threading.Lock()
+
+
+def _get_vr_cached(vr, code, minute_date, is_history, n=5):
+    """
+    获取带量比分时数据（历史模式带缓存，线程安全）
+
+    Args:
+        vr (BasicMinutesWithVR): 复用实例
+        code (str): 股票代码
+        minute_date (str): 分时查询日期 YYYYMMDD
+        is_history (bool): 是否历史模式
+        n (int): 量比基准过去n日
+
+    Returns:
+        DataFrame: 带量比的分时数据
+    """
+    if not is_history or not MINUTES_CACHE_ENABLED:
+        return vr.get_data(code, minute_date, n=n)
+
+    key = (code, minute_date, n)
+    with _minutes_lock:
+        if key in _minutes_cache:
+            return _minutes_cache[key]
+
+    df = vr.get_data(code, minute_date, n=n)
+    if not df.empty:
+        with _minutes_lock:
+            _minutes_cache[key] = df
+    return df
+
+
 # 线程独立数据源：每个线程拥有独立的 BasicBars/BasicMinutesWithVR/MAIndicator
 # thread_safe=True 使底层 client 也线程独立（基于 ClientManager.get_thread_client）
 _thread_local = threading.local()
@@ -114,6 +155,11 @@ def _collect_one(stock, date, bars, vr, ma_indicator):
     """
     采集单只股票数据
 
+    实时模式（date 为当日）：与原逻辑一致
+    历史模式（date 非当日）：字段口径切换为目标日收盘
+        最新价格 = 目标日 close；涨幅 = (目标日 close - 前一交易日 close) / 前收
+        量比/9:30/9:31 = 目标日分时；ma7 = 截至（含）目标日的 7 日均线
+
     Args:
         stock (dict): {'code','name','remark','category'}
         date (str): 查询日期 YYYYMMDD
@@ -128,6 +174,7 @@ def _collect_one(stock, date, bars, vr, ma_indicator):
     name = stock.get('name', '')
     remark = stock.get('remark', '')
     category = stock.get('category', '')
+    is_history = date != datetime.now().strftime('%Y%m%d')
 
     result = {
         'code': code,
@@ -152,37 +199,64 @@ def _collect_one(stock, date, bars, vr, ma_indicator):
         daily_df = pd.DataFrame()
 
     prev_close_from_daily = None
-    # 分时查询日期：默认用传入 date，日线有数据时改用日线最新行日期（最近交易日）
+    # 分时查询日期：默认用传入 date，日线有数据时按模式处理
     minute_date = date
+    # 历史模式目标行在 desc 日线中的下标（未找到为 None）
+    hist_target_idx = None
     if not daily_df.empty:
-        latest_row = daily_df.iloc[0]
-        # 从日线最新行取分时查询日期（解决非交易日/盘前运行时取不到分时的问题）
-        if 'trade_date' in daily_df.columns:
-            trade_date = str(latest_row['trade_date'])[:10].replace('-', '')
-            if trade_date:
-                minute_date = trade_date
-        # 昨收兜底：日线第2行 close
-        if len(daily_df) >= 2:
-            prev_close_from_daily = float(daily_df.iloc[1]['close'])
+        if is_history:
+            # 历史模式：定位 trade_date <= 目标日的最近一行
+            #（非交易日输入自动回退到目标日前最近的交易日；停牌股同理跳过）
+            if 'trade_date' in daily_df.columns:
+                for i in range(len(daily_df)):
+                    d = str(daily_df.iloc[i]['trade_date'])[:10].replace('-', '')
+                    if d and d <= date:
+                        hist_target_idx = i
+                        break
+            if hist_target_idx is not None:
+                target_row = daily_df.iloc[hist_target_idx]
+                hist_date = str(target_row['trade_date'])[:10].replace('-', '')
+                minute_date = hist_date
+                # 历史模式：最新价 = 目标日收盘
+                result['latest_price'] = _round2(float(target_row['close']))
+                # 目标日昨收 = desc 日线的下一行（目标日前一交易日）
+                if hist_target_idx + 1 < len(daily_df):
+                    prev_close_from_daily = float(daily_df.iloc[hist_target_idx + 1]['close'])
+        else:
+            latest_row = daily_df.iloc[0]
+            # 从日线最新行取分时查询日期（解决非交易日/盘前运行时取不到分时的问题）
+            if 'trade_date' in daily_df.columns:
+                trade_date = str(latest_row['trade_date'])[:10].replace('-', '')
+                if trade_date:
+                    minute_date = trade_date
+            # 昨收兜底：日线第2行 close
+            if len(daily_df) >= 2:
+                prev_close_from_daily = float(daily_df.iloc[1]['close'])
 
-    # 2) 分时带量比：最新价、量比、9:30/9:31 涨幅（每次刷新实时获取）
+    # 2) 分时带量比：量比、9:30/9:31 涨幅
+    #    实时模式每次刷新实时获取；历史模式走 (code, date) 缓存（历史分时不变）
     try:
-        vr_df = vr.get_data(code, minute_date, n=5)
+        vr_df = _get_vr_cached(vr, code, minute_date, is_history)
     except Exception as e:
         print(f"[monitor] {code} 获取分时失败: {e}")
         vr_df = pd.DataFrame()
 
-    latest_price = None
+    latest_price = result['latest_price']
     prev_close = None
     if not vr_df.empty and len(vr_df) >= 2:
-        prev_close = vr.get_prev_close()
-        if prev_close is None:
+        if is_history:
+            # 历史：昨收直接用日线目标日的前一交易日（不依赖 vr 实例的实时状态）
             prev_close = prev_close_from_daily
+        else:
+            prev_close = vr.get_prev_close()
+            if prev_close is None:
+                prev_close = prev_close_from_daily
 
         row_930 = vr_df.iloc[0]
         row_931 = vr_df.iloc[1]
-        # 最新价：分时最新行 close（实时）
-        latest_price = _round2(vr_df.iloc[-1]['close'])
+        # 实时：最新价 = 分时最新行 close（历史模式已在日线部分取目标日收盘）
+        if not is_history:
+            latest_price = _round2(vr_df.iloc[-1]['close'])
 
         result['vr_930'] = _round2(row_930['volume_ratio'])
         result['vr_latest'] = _round2(vr_df.iloc[-1]['volume_ratio'])
@@ -191,24 +265,38 @@ def _collect_one(stock, date, bars, vr, ma_indicator):
             result['change_931_pct'] = _safe_pct(float(row_931['close']), prev_close)
 
     # 分时取不到最新价时，用日线兜底
-    if latest_price is None and not daily_df.empty:
+    # （仅实时模式；历史模式目标日超出日线范围时保持 None，避免错误显示最新日数据）
+    if latest_price is None and not daily_df.empty and not is_history:
         latest_price = _round2(daily_df.iloc[0]['close'])
     result['latest_price'] = latest_price
 
-    # 涨幅基于实时最新价和昨收
+    # 涨幅基于最新价和昨收
     if latest_price is not None and prev_close is not None:
         result['price_change_pct'] = _safe_pct(latest_price, prev_close)
     elif latest_price is not None and prev_close_from_daily is not None:
         result['price_change_pct'] = _safe_pct(latest_price, prev_close_from_daily)
 
-    # 3) ma7：历史 close（日线缓存）+ 最新价用分时替换，使 ma7 反映盘中实时价
+    # 3) ma7：实时模式=历史 close（日线缓存）+ 最新价用分时替换，使 ma7 反映盘中实时价
+    #    历史模式=截至（含）目标日的 7 日均线（不含目标日之后的行情）
     if not daily_df.empty:
         asc_df = daily_df.iloc[::-1].reset_index(drop=True)
-        if latest_price is not None:
-            asc_df.iloc[-1, asc_df.columns.get_loc('close')] = float(latest_price)
-        ma_df = ma_indicator.calculate(asc_df)
-        result['ma7'] = _round2(ma_df.iloc[-1]['ma7'])
-        result['dev_ma7_pct'] = _safe_pct(latest_price, result['ma7'])
+        if is_history:
+            if hist_target_idx is not None:
+                # asc 序列截至（含）目标日的部分
+                end_idx = len(daily_df) - 1 - hist_target_idx
+                hist_df = asc_df.iloc[:end_idx + 1].reset_index(drop=True)
+                if len(hist_df) >= 7:
+                    ma_df = ma_indicator.calculate(hist_df)
+                    ma7_val = ma_df.iloc[-1]['ma7']
+                    if pd.notna(ma7_val):
+                        result['ma7'] = _round2(float(ma7_val))
+                        result['dev_ma7_pct'] = _safe_pct(latest_price, result['ma7'])
+        else:
+            if latest_price is not None:
+                asc_df.iloc[-1, asc_df.columns.get_loc('close')] = float(latest_price)
+            ma_df = ma_indicator.calculate(asc_df)
+            result['ma7'] = _round2(ma_df.iloc[-1]['ma7'])
+            result['dev_ma7_pct'] = _safe_pct(latest_price, result['ma7'])
 
     return result
 

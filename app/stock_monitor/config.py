@@ -26,5 +26,9 @@ BATCH_INTERVAL = 0.2
 # 日线数据缓存（日内有效，避免重复请求）
 DAILY_CACHE_ENABLED = True
 
+# 历史分时缓存（历史分时数据不变，按 (code, date, n) 缓存，重复查询同日期免网络请求）
+# 仅历史查询模式生效；实时模式不走此缓存（分时盘中持续变化）
+MINUTES_CACHE_ENABLED = True
+
 # 并发采集线程数（1=串行，3=推荐，增大提速但增连接数）
 MAX_WORKERS = 3
