@@ -32,9 +32,12 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
 .zx_bull_bear_line { color: #ffd700; }
 .sig-tag { background: #f5a623; color: #fff; border-radius: 3px; padding: 0 6px; }
 .sig-tag-other { background: #c0c4cc; color: #fff; border-radius: 3px; padding: 0 6px; }
-.note { margin-top: 8px; font-size: 13px; color: #b8860b; min-height: 0; }
-.msg { margin-top: 8px; font-size: 13px; color: #e64545; min-height: 18px; }
-#group { min-width: 140px; }
+.note { margin-top: 8px; font-size: 13px; color: #b8860b;
+  height: 18px; line-height: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.msg { margin-top: 8px; font-size: 13px; color: #e64545;
+  height: 18px; line-height: 18px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+#group { min-width: 140px; max-width: 160px; text-overflow: ellipsis; }   /* 长分组名截断，防撑宽挤动工具栏按钮（下拉展开仍显全名） */
+#signal { max-width: 260px; text-overflow: ellipsis; }
 #btn { min-width: 88px; }   /* 查询/查询中两态等宽，避免按钮宽度抖动推移后续区块 */
 /* 工具栏功能分区：浅灰底圆角区块+左上角标签，书签区独立金色主题，防误按 */
 .zone { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; position: relative;
@@ -325,7 +328,7 @@ function groupCount(name) {
 function renderGroupSel() {
   const g = document.getElementById('group');
   g.innerHTML = ['全部', ...GROUPS].map(n =>
-    `<option value="${n}">${n} (${groupCount(n)})</option>`).join('');
+    `<option value="${n}" title="${n} (${groupCount(n)})">${n} (${groupCount(n)})</option>`).join('');
   g.value = curGroup;
   document.getElementById('delGroup').disabled = (curGroup === '全部');
 }
@@ -337,7 +340,8 @@ function rebuildSignalOptions() {
     const gs = TAGS[sigKey(s)] || [];
     const bm = sigKey(s) === bmKey ? '　★' : '';
     const nt = NOTES[sigKey(s)] ? '　✎' : '';
-    return `<option value="${i}">${s.code}　${s.trade_date}${gs.length ? '　[' + gs.join(',') + ']' : ''}${bm}${nt}</option>`;
+    const full = `${s.code}　${s.trade_date}${gs.length ? '　[' + gs.join(',') + ']' : ''}${bm}${nt}`;
+    return `<option value="${i}" title="${full}">${full}</option>`;
   }).join('');
 }
 
