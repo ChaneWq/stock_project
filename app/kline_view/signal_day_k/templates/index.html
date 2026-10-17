@@ -90,6 +90,12 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
 .modal-close:hover { color: #333; }
 .modal-body { font-size: 13px; line-height: 1.9; color: #444; }
 .modal-body b { display: block; margin: 8px 0 2px; color: #222; }
+/* 导入数据弹窗：模式选择行 + 覆盖警示红字 */
+.import-foot { display: flex; gap: 14px; align-items: center; margin-top: 12px;
+  padding-top: 10px; border-top: 1px dashed #dcdfe6; }
+.import-mode { font-size: 13px; color: #333; cursor: pointer; user-select: none; }
+.import-mode input { accent-color: #f5a623; margin-right: 4px; vertical-align: -2px; }
+.import-warn { color: #e64545; }
 </style>
 </head>
 <body>
@@ -175,6 +181,12 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       <button id="dayNext">下一交易日</button>
       <button id="dayHome" disabled>回到信号日</button>
     </div>
+    <div class="zone">
+      <span class="zone-tag">数据管理</span>
+      <button id="exportBtn">导出数据</button>
+      <button id="importBtn">导入数据</button>
+      <input type="file" id="importFile" accept=".json,application/json" style="display:none">
+    </div>
   <div class="note" id="note"></div>
   <div class="msg" id="msg"></div>
 </div>
@@ -203,12 +215,31 @@ button:disabled { background: #a0cfff; cursor: not-allowed; }
       <b>【快捷键】</b>（跟随「快捷键」开关，焦点在输入框时无效）<br>
       w=上一个信号　e=下一个信号　c=复制代码　n=写备注　r=切换快捷键开关（关闭后仍可按 r 重新开启）<br>
       ←(左方向键)=上一交易日　→(右方向键)=下一交易日　a=回到信号日（交易日光标越出可视窗口自动平移）<br>
-      Esc=关闭弹窗/浮层（使用说明、标记分组、写备注；不受开关限制，输入框内也生效）
+      Esc=关闭弹窗/浮层（使用说明、导入数据、标记分组、写备注；不受开关限制，输入框内也生效）
       <b>【图上标注】</b><br>
       金色竖线=信号日（「信号日线」开关）　金色虚线=信号日收盘价（「收盘价线」开关）<br>
       鼠标悬停=自由十字光标（跟随鼠标，Y轴标签显示所指价位）<br>
       按 a/←/→ 切换交易日=十字交叉定位锚点K线收盘价（白色虚线+价格标签，锚点=信号日时隐藏）<br>
       灰色点线=同股其它信号日　固定数据面板随十字光标刷新
+      <b>【数据管理】</b><br>
+      · 导出数据：分组/标记/书签/备注+信号清单打包为单个备份 JSON 下载<br>
+      · 导入数据：选备份文件→弹窗确认→合并（推荐）/覆盖还原，可勾选一并合并信号清单（只增不减），完成后自动刷新页面数据<br>
+      · 合并=分组取并集、同信号的标记与备注以备份为准、书签冲突取更靠后（只前进不后退）<br>
+      · 覆盖还原=分组/标记/书签/备注整体替换为备份内容（破坏性，需再次确认；信号清单仍只追加）<br>
+      · 每次导入前自动备份当前数据（review_data.json.import_bak），误导入可手工回滚
+    </div>
+  </div>
+</div>
+
+<!-- 导入数据确认弹窗：选文件本地预校验通过后展示备份概况+模式选择，破坏性覆盖模式提交时再 confirm -->
+<div class="modal" id="importModal" style="display:none">
+  <div class="modal-card" style="width:470px">
+    <div class="modal-head">导入数据 <span class="modal-close" id="importClose">×</span></div>
+    <div class="modal-body" id="importInfo"></div>
+    <div class="import-foot">
+      <label class="import-mode"><input type="radio" name="importMode" value="merge" checked> 合并导入（推荐）</label>
+      <label class="import-mode"><input type="radio" name="importMode" value="replace"> 覆盖还原</label>
+      <button id="importGo" style="margin-left:auto;">开始导入</button>
     </div>
   </div>
 </div>
@@ -966,10 +997,11 @@ document.addEventListener('click', e => {
 });
 
 // Esc 关闭弹层：独立监听器，不受「快捷键」开关/焦点在输入框限制（textarea 聚焦时也要能关）；
-// 一次关一层，按层级从高到低：使用说明弹窗 → 标记分组浮层 → 备注浮层
+// 一次关一层，按层级从高到低：使用说明弹窗 → 导入数据弹窗 → 标记分组浮层 → 备注浮层
 document.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;
   if (helpOpen()) { helpModal.style.display = 'none'; return; }
+  if (importModal.style.display !== 'none') { importModal.style.display = 'none'; return; }
   if (tagPop.classList.contains('show')) { tagPop.classList.remove('show'); return; }
   if (notePop.classList.contains('show')) notePop.classList.remove('show');
 });
@@ -1028,6 +1060,110 @@ function backToSignal() { if (KDATA) moveCursor(KDATA.signal_index); }
 dayPrevBtn.addEventListener('click', prevDay);
 dayNextBtn.addEventListener('click', nextDay);
 dayHomeBtn.addEventListener('click', backToSignal);
+
+// ===================== 数据导入导出 =====================
+// 分组/标记/书签/备注统一存后端 review_data.json：导出=浏览器直接下载备份 JSON，
+// 导入=选文件→本地预校验→弹窗确认（合并/覆盖）→上传后端先备份再写回→刷新页面数据
+const exportBtn = document.getElementById('exportBtn');
+const importBtn = document.getElementById('importBtn');
+const importFile = document.getElementById('importFile');
+const importModal = document.getElementById('importModal');
+const importInfo = document.getElementById('importInfo');
+
+// 导出：GET 直接触发浏览器下载（中文文件名由后端 Content-Disposition 决定）
+exportBtn.addEventListener('click', () => { window.location.href = '/api/export'; });
+
+// 本地预校验（与后端 _validate_import 同源）：通过返回备份概况，否则返回 null。
+// 兼容直接导入存储文件 review_data.json（无 version/signals 头）；信号数含从标记/备注/书签键反推的
+function validateImport(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  if (!Array.isArray(raw.groups) || !raw.tags || typeof raw.tags !== 'object'
+    || !raw.bookmarks || typeof raw.bookmarks !== 'object'
+    || !raw.notes || typeof raw.notes !== 'object') return null;
+  if (raw.version != null && (typeof raw.version !== 'number' || raw.version > 1)) return null;
+  if (raw.signals != null && !Array.isArray(raw.signals)) return null;
+  const seen = new Set((raw.signals || []).map(s => (s && s.code || '') + '|' + (s && s.trade_date || '')));
+  let sigs = (raw.signals || []).length;
+  [...Object.keys(raw.tags), ...Object.keys(raw.notes), ...Object.values(raw.bookmarks)]
+    .forEach(k => {
+      if (typeof k === 'string' && /^\d{6}\|\d{4}-\d{2}-\d{2}$/.test(k.trim()) && !seen.has(k.trim())) {
+        seen.add(k.trim()); sigs++;
+      }
+    });
+  return { groups: raw.groups.length, tags: Object.keys(raw.tags).length,
+           bookmarks: Object.keys(raw.bookmarks).length, notes: Object.keys(raw.notes).length,
+           signals: sigs, exported_at: raw.exported_at || '-' };
+}
+
+let importFileObj = null;   // 预校验通过的待导入文件
+
+importBtn.addEventListener('click', () => importFile.click());
+importFile.addEventListener('change', () => {
+  const f = importFile.files[0];
+  importFile.value = '';   // 清空选择，允许重复选择同一文件再次导入
+  if (!f) return;
+  f.text().then(txt => {
+    let raw;
+    try { raw = JSON.parse(txt); }
+    catch (e) { msg.textContent = '导入失败：文件不是有效的 JSON'; return; }
+    const sum = validateImport(raw);
+    if (!sum) { msg.textContent = '导入失败：不是本页面导出的备份文件（结构/版本不符）'; return; }
+    importFileObj = f;
+    importInfo.innerHTML =
+      `文件：${f.name}<br>导出时间：${sum.exported_at}<br>` +
+      `内容：<b>${sum.groups}</b> 个分组、<b>${sum.tags}</b> 条标记、<b>${sum.bookmarks}</b> 个书签、<b>${sum.notes}</b> 条备注` +
+      (sum.signals > 0 ? `、<b>${sum.signals}</b> 条信号（含从标记/备注解析出的）` : '') + `<br>` +
+      (sum.signals > 0
+        ? `<label class="import-mode"><input type="checkbox" id="importSignals" checked> 同时合并信号清单到本地 signals.csv（只增不减）</label><br>`
+        : '') +
+      `导入前自动备份当前数据（review_data.json.import_bak），误导入可手工回滚。<br>` +
+      `<span class="import-warn">覆盖还原</span>将清空现有全部分组/标记/书签/备注，替换为备份内容`;
+    importModal.style.display = 'flex';
+  });
+});
+
+// 执行导入：mode 随表单上传；覆盖还原属破坏性操作，提交时再 confirm 一次（惯例同取消书签）
+document.getElementById('importGo').addEventListener('click', async () => {
+  if (!importFileObj) return;
+  const mode = document.querySelector('input[name="importMode"]:checked').value;
+  if (mode === 'replace'
+    && !confirm('覆盖还原将清空现有全部分组/标记/书签/备注并替换为备份内容，确认继续？')) return;
+  const fd = new FormData();
+  fd.append('file', importFileObj);
+  fd.append('mode', mode);
+  const sigChk = document.getElementById('importSignals');   // 老格式备份无此勾选框
+  fd.append('import_signals', sigChk && sigChk.checked ? '1' : '0');
+  let res, data;
+  try {
+    res = await fetch('/api/import', { method: 'POST', body: fd });
+    data = await res.json();
+  } catch (e) { msg.textContent = '导入失败：' + e.message; return; }
+  if (!res.ok) { msg.textContent = data.error || '导入失败'; return; }
+  importModal.style.display = 'none';
+  // 重新拉取信号清单（可能已合并）+分组+备注，刷新下拉/书签/备注条
+  const [sigRes, grpRes, noteRes] = await Promise.all([
+    fetch('/api/signals'), fetch('/api/groups'), fetch('/api/notes')]);
+  if (sigRes.ok) {
+    const list = await sigRes.json();
+    if (Array.isArray(list) && list.length) SIGNALS = list;
+  }
+  if (grpRes.ok) {
+    const gd = await grpRes.json();
+    GROUPS = gd.groups || []; TAGS = gd.tags || {}; BOOKMARKS = gd.bookmarks || {};
+  }
+  if (noteRes.ok) NOTES = await noteRes.json() || {};
+  renderGroupSel();
+  applyGroupFilter();
+  const st = data.stats || {};
+  msg.textContent = (st.mode === 'replace' ? '覆盖还原完成' : '合并导入完成')
+    + `：分组${st.mode === 'replace' ? '共' : '新增'} ${st.added_groups ?? 0} 个，`
+    + `标记 ${st.imported_tags ?? 0} 条、备注 ${st.imported_notes ?? 0} 条、书签更新 ${st.bookmarks_set ?? 0} 个`
+    + (st.added_signals ? `、信号清单新增 ${st.added_signals} 条` : '')
+    + (st.bookmarks_kept ? `（保留更靠后现书签 ${st.bookmarks_kept} 个）` : '');
+});
+
+document.getElementById('importClose').addEventListener('click', () => { importModal.style.display = 'none'; });
+importModal.addEventListener('click', e => { if (e.target === importModal) importModal.style.display = 'none'; });
 
 // 页面加载后拉取信号清单+分组并默认查询第一个
 loadAll();

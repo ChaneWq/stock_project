@@ -22,12 +22,20 @@
     DELETE /api/bookmark 取消分组书签（JSON: group）
     GET  /api/notes   备注清单（键 code|date，与分组无关全局共享）
     POST /api/notes   保存备注（JSON: code, date, note；note 空白=删除该信号备注）
+    GET  /api/export  一键导出：分组/标记/书签/备注/信号清单打包单 JSON 附件下载
+    POST /api/import  一键导入：上传备份 JSON（form: file + mode=merge|replace + import_signals），
+                      可选将备份中的信号清单并入 data/signals.csv（去重保序只增不减）；
+                      导入前自动备份当前数据到 data/review_data.json.import_bak
 """
 
 import bisect
+import csv
 import json
 import os
+import re
 import sys
+from datetime import datetime
+from urllib.parse import quote
 
 import pandas as pd
 from flask import Flask, render_template, jsonify, request
@@ -61,7 +69,7 @@ _zx_trend_ind = ZXShortTermTrendIndicator()
 _zx_bullbear_ind = ZXBullBearLineIndicator()
 _mabias_ind = MABiasIndicator()  # 默认 periods=[7] → bias7
 
-_SIGNALS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'signals.csv')
+_SIGNALS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'signals.csv')
 
 
 def load_signals():
@@ -79,67 +87,78 @@ def load_signals():
     return df.to_dict('records')
 
 
-# 分组与标记持久化文件（本地配置，不入 git）；"全部"为内置虚拟分组不落文件
-_GROUPS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'groups.json')
+# 分组/标记/书签/备注/信号清单等数据文件统一集中存放在 data/ 子目录（本地配置，不入 git）；
+# "全部"为内置虚拟分组不落文件。旧版双文件（模块根目录 groups.json + notes.json）
+# 在新文件缺失时自动合并迁移到 data/review_data.json（旧文件改名 .migrated 保留）
+_DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data')
+os.makedirs(_DATA_DIR, exist_ok=True)
+_DATA_JSON = os.path.join(_DATA_DIR, 'review_data.json')
+_LEGACY_GROUPS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'groups.json')
+_LEGACY_NOTES_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'notes.json')
 
 
-def load_groups():
-    """读分组/标记/书签（文件缺失/损坏回退空结构，不报错）"""
-    if not os.path.exists(_GROUPS_JSON):
-        return {'groups': [], 'tags': {}, 'bookmarks': {}}
+def _load_json_file(path):
+    """读 JSON 文件；缺失/损坏返回 None，不报错（由调用方决定回退）"""
+    if not os.path.exists(path):
+        return None
     try:
-        with open(_GROUPS_JSON, 'r', encoding='utf-8') as f:
+        with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
-        if not isinstance(data, dict):
-            raise ValueError('groups.json 结构异常')
-        groups = [str(g) for g in data.get('groups', [])]
-        tags = {str(k): [str(g) for g in v if g in groups]
-                for k, v in data.get('tags', {}).items() if isinstance(v, list)}
-        # 书签：{分组名: "code|date"}，分组须存在（"全部"为内置键）；旧文件无此字段视为空
-        bookmarks = {}
-        raw_bm = data.get('bookmarks', {})
-        if isinstance(raw_bm, dict):
-            for k, v in raw_bm.items():
-                k, v = str(k), str(v)
-                if (k in groups or k == '全部') and '|' in v:
-                    bookmarks[k] = v
-        return {'groups': groups, 'tags': {k: v for k, v in tags.items() if v}, 'bookmarks': bookmarks}
+        return data if isinstance(data, dict) else None
     except Exception:
-        return {'groups': [], 'tags': {}, 'bookmarks': {}}
+        return None
 
 
-def save_groups(data):
+def _sanitize_data(data):
+    """清洗数据：分组去重保序，剔除指向不存在分组的标记/书签与空白备注（惯例同旧 load_groups）"""
+    groups = list(dict.fromkeys(str(g) for g in data.get('groups', []) if str(g).strip()))
+    tags = {}
+    for k, v in (data.get('tags') or {}).items():
+        if isinstance(v, list):
+            vals = [str(g) for g in v if g in groups]
+            if vals:
+                tags[str(k)] = vals
+    bookmarks = {}
+    for k, v in (data.get('bookmarks') or {}).items():
+        k, v = str(k), str(v)
+        if (k in groups or k == '全部') and '|' in v:
+            bookmarks[k] = v
+    notes = {str(k): str(v) for k, v in (data.get('notes') or {}).items() if str(v).strip()}
+    return {'groups': groups, 'tags': tags, 'bookmarks': bookmarks, 'notes': notes}
+
+
+def _migrate_legacy():
+    """一次性迁移：旧版 groups.json + notes.json 合并生成 review_data.json，旧文件改名 .migrated"""
+    lg = _load_json_file(_LEGACY_GROUPS_JSON) or {}
+    ln = _load_json_file(_LEGACY_NOTES_JSON) or {}
+    data = _sanitize_data({'groups': lg.get('groups', []), 'tags': lg.get('tags', {}),
+                           'bookmarks': lg.get('bookmarks', {}), 'notes': ln})
+    save_data(data)
+    for p in (_LEGACY_GROUPS_JSON, _LEGACY_NOTES_JSON):
+        if os.path.exists(p):
+            try:
+                os.replace(p, p + '.migrated')
+            except OSError:
+                pass
+    return data
+
+
+def load_data():
+    """读全量数据；新文件缺失先做旧版迁移，损坏回退空结构（不覆盖坏文件，留待人工检查）"""
+    if not os.path.exists(_DATA_JSON):
+        return _migrate_legacy()
+    raw = _load_json_file(_DATA_JSON)
+    if raw is None:
+        return {'groups': [], 'tags': {}, 'bookmarks': {}, 'notes': {}}
+    return _sanitize_data(raw)
+
+
+def save_data(data):
     """落盘（先写临时文件再替换，避免写一半损坏）"""
-    tmp = _GROUPS_JSON + '.tmp'
+    tmp = _DATA_JSON + '.tmp'
     with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, _GROUPS_JSON)
-
-
-# 信号备注持久化文件（本地配置，不入 git）；键为 code|date 与分组无关，全局共享
-_NOTES_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'notes.json')
-
-
-def load_notes():
-    """读备注（文件缺失/损坏回退空 dict，不报错）"""
-    if not os.path.exists(_NOTES_JSON):
-        return {}
-    try:
-        with open(_NOTES_JSON, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-        if not isinstance(data, dict):
-            raise ValueError('notes.json 结构异常')
-        return {str(k): str(v) for k, v in data.items() if str(v).strip()}
-    except Exception:
-        return {}
-
-
-def save_notes(data):
-    """落盘（先写临时文件再替换，避免写一半损坏）"""
-    tmp = _NOTES_JSON + '.tmp'
-    with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, _NOTES_JSON)
+    os.replace(tmp, _DATA_JSON)
 
 
 @app.route('/')
@@ -161,7 +180,8 @@ def api_signals():
 def api_groups():
     """分组管理：GET 清单 / POST 创建 / DELETE 删除（连带清理标记）"""
     if request.method == 'GET':
-        return jsonify(load_groups())
+        d = load_data()
+        return jsonify({'groups': d['groups'], 'tags': d['tags'], 'bookmarks': d['bookmarks']})
 
     data = request.get_json(silent=True) or {}
     name = (data.get('name') or '').strip()
@@ -170,22 +190,22 @@ def api_groups():
     if name == '全部':
         return jsonify({'error': '"全部"为内置分组，不能创建或删除'}), 400
 
-    g = load_groups()
+    d = load_data()
     if request.method == 'POST':
-        if name in g['groups']:
+        if name in d['groups']:
             return jsonify({'error': f'分组「{name}」已存在'}), 400
-        g['groups'].append(name)
-        save_groups(g)
+        d['groups'].append(name)
+        save_data(d)
         return jsonify({'ok': True})
 
     # DELETE：删除分组并清理所有信号上该组标记与该书签
-    if name not in g['groups']:
+    if name not in d['groups']:
         return jsonify({'error': f'分组「{name}」不存在'}), 404
-    g['groups'].remove(name)
-    g['tags'] = {k: [t for t in v if t != name] for k, v in g['tags'].items()}
-    g['tags'] = {k: v for k, v in g['tags'].items() if v}
-    g['bookmarks'].pop(name, None)
-    save_groups(g)
+    d['groups'].remove(name)
+    d['tags'] = {k: [t for t in v if t != name] for k, v in d['tags'].items()}
+    d['tags'] = {k: v for k, v in d['tags'].items() if v}
+    d['bookmarks'].pop(name, None)
+    save_data(d)
     return jsonify({'ok': True})
 
 
@@ -201,21 +221,21 @@ def api_tags():
     if not isinstance(groups, list):
         return jsonify({'error': 'groups 须为数组'}), 400
 
-    g = load_groups()
-    unknown = [x for x in groups if x not in g['groups']]
+    d = load_data()
+    unknown = [x for x in groups if x not in d['groups']]
     if unknown:
         return jsonify({'error': f'分组不存在：{",".join(unknown)}'}), 400
 
     key = f'{code}|{date}'
     if groups:
-        g['tags'][key] = groups
+        d['tags'][key] = groups
     else:
-        g['tags'].pop(key, None)
+        d['tags'].pop(key, None)
     # 信号被移出分组时，级联清除指向该信号的书签（"全部"书签不受标记影响）
-    for grp in list(g['bookmarks']):
-        if grp != '全部' and g['bookmarks'][grp] == key and grp not in g['tags'].get(key, []):
-            del g['bookmarks'][grp]
-    save_groups(g)
+    for grp in list(d['bookmarks']):
+        if grp != '全部' and d['bookmarks'][grp] == key and grp not in d['tags'].get(key, []):
+            del d['bookmarks'][grp]
+    save_data(d)
     return jsonify({'ok': True})
 
 
@@ -227,13 +247,13 @@ def api_bookmark():
     if not group:
         return jsonify({'error': '缺少 group 参数'}), 400
 
-    g = load_groups()
-    if group != '全部' and group not in g['groups']:
+    d = load_data()
+    if group != '全部' and group not in d['groups']:
         return jsonify({'error': f'分组「{group}」不存在'}), 404
 
     if request.method == 'DELETE':
-        g['bookmarks'].pop(group, None)
-        save_groups(g)
+        d['bookmarks'].pop(group, None)
+        save_data(d)
         return jsonify({'ok': True})
 
     code = (data.get('code') or '').strip()
@@ -248,11 +268,11 @@ def api_bookmark():
     if key not in keys:
         return jsonify({'error': f'信号 {key} 不在 signals.csv 中'}), 404
 
-    old = g['bookmarks'].get(group)
+    old = d['bookmarks'].get(group)
     if old and old in keys and keys.index(old) > keys.index(key):
         return jsonify({'ok': True, 'kept': True, 'key': old})   # 保留更靠后的原书签
-    g['bookmarks'][group] = key
-    save_groups(g)
+    d['bookmarks'][group] = key
+    save_data(d)
     return jsonify({'ok': True, 'kept': False, 'key': key})
 
 
@@ -260,7 +280,7 @@ def api_bookmark():
 def api_notes():
     """信号备注：GET 全量清单 / POST 保存（note 空白=删除；键 code|date，与分组无关）"""
     if request.method == 'GET':
-        return jsonify(load_notes())
+        return jsonify(load_data()['notes'])
 
     data = request.get_json(silent=True) or {}
     code = (data.get('code') or '').strip()
@@ -271,14 +291,179 @@ def api_notes():
     if len(note) > 2000:
         return jsonify({'error': '备注最长 2000 字'}), 400
 
-    notes = load_notes()
+    d = load_data()
     key = f'{code}|{date}'
     if note:
-        notes[key] = note
+        d['notes'][key] = note
     else:
-        notes.pop(key, None)
-    save_notes(notes)
+        d['notes'].pop(key, None)
+    save_data(d)
     return jsonify({'ok': True, 'deleted': not note})
+
+
+# ===================== 数据导入导出 =====================
+# 分组/标记/书签/备注统一存于 review_data.json：导出打包单 JSON 下载、导入整体写回
+# （signals.csv 信号清单不参与导入导出，属信号源另行走维护流程）
+
+
+def _validate_import(raw):
+    """导入文件结构校验：通过返回 None，否则返回错误文案（先校验后写盘，绝不半截导入）。
+    兼容直接导入存储文件 review_data.json（无 version/signals 头，四项结构同 v1）"""
+    if not isinstance(raw, dict):
+        return '备份文件结构异常：顶层须为 JSON 对象'
+    for field, typ in (('groups', list), ('tags', dict), ('bookmarks', dict), ('notes', dict)):
+        if not isinstance(raw.get(field), typ):
+            return f'备份文件缺少字段或类型不符：{field}'
+    ver = raw.get('version')
+    if ver is not None:
+        if not isinstance(ver, int) or isinstance(ver, bool):
+            return '备份文件 version 须为整数'
+        if ver > 1:
+            return f'备份文件版本过新（v{ver}），请先升级程序后再导入'
+    if 'signals' in raw and not isinstance(raw.get('signals'), list):
+        return '备份文件字段类型不符：signals'
+    return None
+
+
+@app.route('/api/export')
+def api_export():
+    """一键导出：分组/标记/书签/备注/信号清单打包为单 JSON 附件下载"""
+    d = load_data()
+    now = datetime.now()
+    payload = {
+        'version': 1,
+        'app': 'signal_day_k',
+        'exported_at': now.strftime('%Y-%m-%d %H:%M:%S'),
+        'signals': load_signals(),
+        'groups': d['groups'],
+        'tags': d['tags'],
+        'bookmarks': d['bookmarks'],
+        'notes': d['notes'],
+    }
+    fname = f'复盘备份_{now.strftime("%Y%m%d_%H%M%S")}.json'
+    resp = jsonify(payload)
+    # ASCII 回退名 + RFC5987 UTF-8 名，中文文件名各浏览器兼容
+    resp.headers['Content-Disposition'] = (
+        f"attachment; filename=\"signal_backup.json\"; filename*=UTF-8''{quote(fname)}")
+    return resp
+
+
+@app.route('/api/import', methods=['POST'])
+def api_import():
+    """一键导入：上传备份 JSON（form: file + mode=merge 合并 / replace 覆盖还原）。
+    导入前自动备份当前数据到 review_data.import_bak.json（覆盖上一次），误导入可回滚"""
+    file = request.files.get('file')
+    if file is None or not file.filename:
+        return jsonify({'error': '请选择备份 JSON 文件'}), 400
+    mode = request.form.get('mode') or 'merge'
+    if mode not in ('merge', 'replace'):
+        return jsonify({'error': 'mode 须为 merge 或 replace'}), 400
+
+    try:
+        raw = json.loads(file.read().decode('utf-8-sig'))
+    except Exception:
+        return jsonify({'error': '文件不是有效的 JSON'}), 400
+    err = _validate_import(raw)
+    if err:
+        return jsonify({'error': err}), 400
+    imp = _sanitize_data(raw)   # 规范化备份内容（剔除引用不存在分组的标记等）
+
+    # 备份中的信号清单（可选，老格式/存储文件无此字段）：仅保留 code/trade_date 非空项并去重保序
+    imp_signals = []
+    for s in raw.get('signals') or []:
+        if isinstance(s, dict):
+            c, dt = str(s.get('code') or '').strip(), str(s.get('trade_date') or '').strip()
+            if c and dt:
+                imp_signals.append({'code': c, 'trade_date': dt})
+    # 标记/备注/书签键中出现的信号也一并并入：备份的 signals 数组只反映导出当时的 signals.csv，
+    # 而标记对应的信号可能不在其中（如清单被重置过），不反推会导致导入后标记"看不见"
+    _seen_sig = {(s['code'], s['trade_date']) for s in imp_signals}
+    for key in list(imp['tags']) + list(imp['notes']) + list(imp['bookmarks'].values()):
+        c, _, dt = str(key).partition('|')
+        c, dt = c.strip(), dt.strip()
+        if c and re.match(r'\d{4}-\d{2}-\d{2}$', dt) and (c, dt) not in _seen_sig:
+            _seen_sig.add((c, dt))
+            imp_signals.append({'code': c, 'trade_date': dt})
+    # 防御：参数缺失（如浏览器缓存旧前端）时默认合并信号清单，显式传 '0'（取消勾选）才跳过
+    want_signals = request.form.get('import_signals', '1') != '0'
+
+    # 可选：备份信号清单并入 signals.csv（去重保序只增不减，本地已有顺序不动）
+    # signals.csv 除 code,trade_date 外可能还有统计列：原行整行保留，追加行统计列留空
+    added_signals = 0
+    if want_signals and imp_signals:
+        try:
+            with open(_SIGNALS_CSV, 'r', encoding='utf-8-sig', newline='') as f:
+                reader = csv.reader(f)
+                header = next(reader, None)
+                rows = []
+                seen = set()
+                for row in reader:
+                    if len(row) >= 2 and row[0].strip() and row[1].strip():
+                        rows.append(row)
+                        seen.add((row[0].strip(), row[1].strip()))
+        except FileNotFoundError:
+            header, rows, seen = None, [], set()
+        except Exception as e:
+            return jsonify({'error': f'读取 signals.csv 失败：{e}'}), 500
+        add = [s for s in imp_signals if (s['code'], s['trade_date']) not in seen]
+        if add:
+            ncols = len(header) if header else 2
+            out = ([header] if header else [['code', 'trade_date']]) + rows
+            out += [[s['code'], s['trade_date']] + [''] * (ncols - 2) for s in add]
+            tmp = _SIGNALS_CSV + '.tmp'
+            with open(tmp, 'w', encoding='utf-8-sig', newline='') as f:
+                csv.writer(f).writerows(out)
+            os.replace(tmp, _SIGNALS_CSV)
+        added_signals = len(add)
+
+    cur = load_data()
+    # 导入前自动备份当前全量数据（先写临时文件再替换，防写一半）
+    tmp = _DATA_JSON + '.import_bak.tmp'
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(cur, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, _DATA_JSON + '.import_bak')
+
+    if mode == 'replace':
+        # 覆盖还原：分组/标记/书签/备注整体替换为备份内容（signals.csv 只做追加合并，不替换）
+        save_data(imp)
+        return jsonify({'ok': True, 'stats': {
+            'mode': mode, 'added_groups': len(imp['groups']),
+            'imported_tags': len(imp['tags']), 'imported_notes': len(imp['notes']),
+            'bookmarks_set': len(imp['bookmarks']), 'bookmarks_kept': 0,
+            'added_signals': added_signals}})
+
+    # 合并：groups 取并集按备份顺序追加；tags/notes 同键以导入为准；
+    # bookmarks 冲突取 signals.csv 顺序更靠后的键（延续"只前进"），键不在清单视为最前不覆盖现值
+    try:
+        keys = [f"{s['code']}|{s['trade_date']}" for s in load_signals()]
+    except Exception:
+        keys = []
+
+    def _pos(key):
+        return keys.index(key) if key in keys else -1
+
+    new_groups = cur['groups'] + [g for g in imp['groups'] if g not in cur['groups']]
+    new_tags = {**cur['tags'], **imp['tags']}
+    new_notes = {**cur['notes'], **imp['notes']}
+
+    new_bm = dict(cur['bookmarks'])
+    bm_set = bm_kept = 0
+    for grp, key in imp['bookmarks'].items():
+        if grp != '全部' and grp not in new_groups:
+            continue
+        if grp in new_bm and _pos(new_bm[grp]) >= _pos(key):
+            bm_kept += 1   # 现书签更靠后，保留
+            continue
+        new_bm[grp] = key
+        bm_set += 1
+
+    save_data({'groups': new_groups, 'tags': new_tags,
+               'bookmarks': new_bm, 'notes': new_notes})
+    return jsonify({'ok': True, 'stats': {
+        'mode': mode, 'added_groups': len(new_groups) - len(cur['groups']),
+        'imported_tags': len(imp['tags']), 'imported_notes': len(imp['notes']),
+        'bookmarks_set': bm_set, 'bookmarks_kept': bm_kept,
+        'added_signals': added_signals}})
 
 
 @app.route('/api/kline')
