@@ -40,10 +40,12 @@ Thumbs.db
 # Trae / editor temp
 .trae-cn/
 
-# 本地配置（不推送）；signal_day_k 数据文件统一在 data/ 子目录（数据说明.txt 随 git 分发）
+# 本地配置（不推送）；signal_day_k 数据文件统一在 data/ 子目录（说明与 example 模板随 git 分发）
 app/stock_monitor/stocks.csv
 app/kline_view/signal_day_k/data/*
 !app/kline_view/signal_day_k/data/数据说明.txt
+!app/kline_view/signal_day_k/data/review_data.example.json
+!app/kline_view/signal_day_k/data/signals.csv.example
 app/kline_view/signal_day_k/groups.json
 app/kline_view/signal_day_k/notes.json
 app/kline_view/train_mode_day_k/signals.csv
