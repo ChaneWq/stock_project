@@ -54,3 +54,6 @@ app/database/feature_import/config.ini
 
 # 本地 SQLite 数据（不推送）
 app/data_store/data/
+
+# 本地临时脚本（不推送）
+tmp/

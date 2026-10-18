@@ -197,9 +197,11 @@ def query_minutes(code: str, query_date: str) -> list:
 
     bars, vr, _ = _get_resources()
 
-    # 昨收：按查询日期动态拉日线（距今越远拉越多，跨度+40根余量），
-    # 取查询日之前最近一个交易日的收盘价（日线倒序，首行即最近）
+    # 昨收 + 量比基准：按查询日期动态拉日线（距今越远拉越多，跨度+40根余量），
+    # 日线倒序（最新在前），before_idx[0] 即查询日的前一交易日
     prev_close = None
+    vol_list = None
+    n = 5
     span = max((datetime.now() - ts).days, 0)
     daily_df = bars.get_daily(code, span + 40)
     if daily_df is not None and not daily_df.empty:
@@ -207,9 +209,14 @@ def query_minutes(code: str, query_date: str) -> list:
         before_idx = td_list[td_list < date_str].index
         if len(before_idx) > 0:
             prev_close = float(daily_df.loc[before_idx[0], 'close'])
+            # 量比基准：查询日前n个交易日成交量（时间正序）
+            rows = daily_df.loc[before_idx[0]: before_idx[0] + n - 1]
+            if len(rows) >= n:
+                vol_list = rows['volume'].astype(float).tolist()[::-1]
 
-    # 全天分时（含量比），n=5 为量比基准天数
-    vr_df = vr.get_data(code, date_str, n=5)
+    # 全天分时（含量比）。老日期时 get_data 内部的 fetch_prev_n_day_vol
+    # 只拉最近55根日线定位不到基准，这里注入 vol_list 跳过内部定位
+    vr_df = vr.get_data(code, date_str, n=n, prev_day_vol_list=vol_list)
     if vr_df is None or vr_df.empty:
         return []
 
