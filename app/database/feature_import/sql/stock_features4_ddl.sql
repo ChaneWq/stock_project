@@ -1,43 +1,45 @@
-CREATE TABLE `stock_features4` (
-    `code`                varchar(10)   NOT NULL COMMENT '股票代码',
-    `trade_date`          date          NOT NULL COMMENT '交易日期',
-    `open`                decimal(10,3) NULL COMMENT '开盘价',
-    `close`               decimal(10,3) NULL COMMENT '收盘价',
-    `high`                decimal(10,3) NULL COMMENT '最高价',
-    `low`                 decimal(10,3) NULL COMMENT '最低价',
-    `vol`                 bigint        NULL COMMENT '成交量',
-    `amount`              bigint        NULL COMMENT '成交额',
-    `zx_short_term_trend` decimal(10,3) NULL COMMENT '知行短期趋势',
-    `zx_bull_bear_line`   decimal(10,3) NULL COMMENT '知行牛熊线',
-    `K`                   decimal(8,3)  NULL COMMENT 'KDJ-K值',
-    `D`                   decimal(8,3)  NULL COMMENT 'KDJ-D值',
-    `J`                   decimal(8,3)  NULL COMMENT 'KDJ-J值',
-    `BBI`                 decimal(10,3) NULL COMMENT 'BBI多空指标',
-    `MA5`                 decimal(10,3) NULL COMMENT '5日均线',
-    `MA7`                 decimal(10,3) NULL COMMENT '7日均线',
-    `MA10`                decimal(10,3) NULL COMMENT '10日均线',
-    `MA20`                decimal(10,3) NULL COMMENT '20日均线',
-    `MA30`                decimal(10,3) NULL COMMENT '30日均线',
-    `MA40`                decimal(10,3) NULL COMMENT '40日均线',
-    `MA45`                decimal(10,3) NULL COMMENT '45日均线',
-    `MA60`                decimal(10,3) NULL COMMENT '60日均线',
-    `MA90`                decimal(10,3) NULL COMMENT '90日均线',
-    `MA250`               decimal(10,3) NULL COMMENT '250日均线',
-    `DIF`                 decimal(10,4) NULL COMMENT 'MACD-DIF',
-    `DEA`                 decimal(10,4) NULL COMMENT 'MACD-DEA',
-    `MACD`                decimal(10,4) NULL COMMENT 'MACD柱',
-    `zxt`                 decimal(10,3) NULL COMMENT '砖型图信号标志',
-    `dzs`                 decimal(10,3) NULL COMMENT '单针短期指标',
-    `dzt`                 decimal(10,3) NULL COMMENT '单针长期指标',
-    `vol_ratio_0930`      decimal(10,3) NULL COMMENT '9:30量比',
-    `vol_ratio_0931`      decimal(10,3) NULL COMMENT '9:31量比',
-    `vol_ratio_0932`      decimal(10,3) NULL COMMENT '9:32量比',
-    `price_0930`          decimal(10,3) NULL COMMENT '9:30价格',
-    `price_0931`          decimal(10,3) NULL COMMENT '9:31价格',
-    `price_0932`          decimal(10,3) NULL COMMENT '9:32价格'
+CREATE TABLE stock_features4 (
+    code                varchar(10)   NOT NULL COMMENT '股票代码',
+    trade_date          date          NOT NULL COMMENT '交易日期',
+    open                decimal(10,3) NULL COMMENT '开盘价',
+    close               decimal(10,3) NULL COMMENT '收盘价',
+    high                decimal(10,3) NULL COMMENT '最高价',
+    low                 decimal(10,3) NULL COMMENT '最低价',
+    vol                 bigint        NULL COMMENT '成交量',
+    amount              bigint        NULL COMMENT '成交额',
+    vma5                decimal(16,2) NULL COMMENT '5日成交量均线',
+    vma10               decimal(16,2) NULL COMMENT '10日成交量均线',
+    zx_short_term_trend decimal(10,3) NULL COMMENT '知行短期趋势',
+    zx_bull_bear_line   decimal(10,3) NULL COMMENT '知行牛熊线',
+    K                   decimal(8,3)  NULL COMMENT 'KDJ-K值',
+    D                   decimal(8,3)  NULL COMMENT 'KDJ-D值',
+    J                   decimal(8,3)  NULL COMMENT 'KDJ-J值',
+    BBI                 decimal(10,3) NULL COMMENT 'BBI多空指标',
+    MA5                 decimal(10,3) NULL COMMENT '5日均线',
+    MA7                 decimal(10,3) NULL COMMENT '7日均线',
+    MA10                decimal(10,3) NULL COMMENT '10日均线',
+    MA20                decimal(10,3) NULL COMMENT '20日均线',
+    MA30                decimal(10,3) NULL COMMENT '30日均线',
+    MA40                decimal(10,3) NULL COMMENT '40日均线',
+    MA45                decimal(10,3) NULL COMMENT '45日均线',
+    MA60                decimal(10,3) NULL COMMENT '60日均线',
+    MA90                decimal(10,3) NULL COMMENT '90日均线',
+    MA250               decimal(10,3) NULL COMMENT '250日均线',
+    DIF                 decimal(10,4) NULL COMMENT 'MACD-DIF',
+    DEA                 decimal(10,4) NULL COMMENT 'MACD-DEA',
+    MACD                decimal(10,4) NULL COMMENT 'MACD柱',
+    zxt                 decimal(10,3) NULL COMMENT '砖型图信号标志',
+    dzs                 decimal(10,3) NULL COMMENT '单针短期指标',
+    dzt                 decimal(10,3) NULL COMMENT '单针长期指标',
+    vol_ratio_0930      decimal(10,3) NULL COMMENT '9:30量比',
+    vol_ratio_0931      decimal(10,3) NULL COMMENT '9:31量比',
+    vol_ratio_0932      decimal(10,3) NULL COMMENT '9:32量比',
+    price_0930          decimal(10,3) NULL COMMENT '9:30价格',
+    price_0931          decimal(10,3) NULL COMMENT '9:31价格',
+    price_0932          decimal(10,3) NULL COMMENT '9:32价格'
 ) ENGINE=OLAP
-UNIQUE KEY(`code`, `trade_date`)
-DISTRIBUTED BY HASH(`code`, `trade_date`) BUCKETS 10
+UNIQUE KEY(code, trade_date)
+DISTRIBUTED BY HASH(code, trade_date) BUCKETS 10
 PROPERTIES (
     "replication_allocation" = "tag.location.default: 1",
     "min_load_replica_num" = "-1",
@@ -54,3 +56,7 @@ PROPERTIES (
     "group_commit_data_bytes" = "134217728",
     "enable_mow_light_delete" = "false"
 );
+
+-- 已有表增量加列（light_schema_change 已开启，秒级生效，不重建表）：
+-- ALTER TABLE stock_features4 ADD COLUMN vma5  decimal(16,2) NULL COMMENT '5日成交量均线' AFTER amount;
+-- ALTER TABLE stock_features4 ADD COLUMN vma10 decimal(16,2) NULL COMMENT '10日成交量均线' AFTER vma5;

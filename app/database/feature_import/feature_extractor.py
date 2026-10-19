@@ -5,11 +5,12 @@
 - 串联指标层各类式指标，计算 stock_features4 表所需的全部日线特征
 - 本模块不含任何指标公式，公式统一来自 pystock_data.indicators 指标层
 
-特征列表（22个，由指标层各类计算）：
+特征列表（24个，由指标层各类计算）：
 - MACDIndicator: DIF/DEA/MACD
 - KDJIndicator: K/D/J
 - MAIndicator: MA5~MA250 十档均线
 - BBIIndicator: BBI
+- VolumeMAIndicator: vma5/vma10（成交量均线）
 - ZXTIndicator: zxt（砖型图）
 - DZSIndicator/DZTIndicator: dzs/dzt（单针）
 - ZXShortTermTrendIndicator/ZXBullBearLineIndicator: zx组合线
@@ -23,7 +24,7 @@ import pandas as pd
 
 from pystock_data.indicators import (
     MACDIndicator, KDJIndicator, MAIndicator, BBIIndicator,
-    ZXTIndicator, DZSIndicator, DZTIndicator,
+    VolumeMAIndicator, ZXTIndicator, DZSIndicator, DZTIndicator,
     ZXShortTermTrendIndicator, ZXBullBearLineIndicator,
 )
 
@@ -33,6 +34,7 @@ MA_PERIODS = [5, 7, 10, 20, 30, 40, 45, 60, 90, 250]
 # 输出列顺序（即表字段顺序）
 OUTPUT_COLUMNS = [
     "code", "trade_date", "open", "close", "high", "low", "vol", "amount",
+    "vma5", "vma10",
     "zx_short_term_trend", "zx_bull_bear_line",
     "K", "D", "J", "BBI",
     *[f"MA{n}" for n in MA_PERIODS],
@@ -45,6 +47,7 @@ _INDICATORS = (
     KDJIndicator(),
     MAIndicator(periods=MA_PERIODS),
     BBIIndicator(),
+    VolumeMAIndicator(periods=[5, 10]),
     ZXTIndicator(),
     DZSIndicator(),
     DZTIndicator(),

@@ -83,6 +83,10 @@ def process_stock(code: str, start_dt: str, end_dt: str,
         if daily_df is None or daily_df.empty:
             return (code, 'ERROR: 日线数据为空', None)
 
+        # 关键：按时间升序排序。fetch_bars 超过800根时多页返回"新页在前、页内升序"，
+        # 不排序时指标滚动窗口与分钟基准量(tail取前n日)会取到错误的数据
+        daily_df = daily_df.sort_values('datetime').reset_index(drop=True)
+
         # 日线指标特征 + 分钟量比特征（传日线数据复用基准量，省网络请求）
         features = extract_features(code, daily_df, start_dt, end_dt)
         if features.empty:
@@ -145,10 +149,31 @@ def run(start_dt: str = None, end_dt: str = None, dry_run: bool = False,
         board (str, optional): 板块过滤，'all' 全部（默认） / 'main' 仅沪深主板
     """
     conf = CONFIG['import']
-    if end_dt is None:
-        end_dt = datetime.now().strftime('%Y-%m-%d')
-    if start_dt is None:
+    today = datetime.now().strftime('%Y-%m-%d')
+
+    # ---- 日期窗口解析，优先级：CLI参数 > config.ini mode ----
+    # CLI 显式给 --start/--end 时按范围模式执行；否则按 mode 配置分支
+    if start_dt or end_dt:
+        mode = 'range'
+        end_dt = end_dt or today
+        start_dt = start_dt or (datetime.now() - timedelta(days=conf['date_window_days'])).strftime('%Y-%m-%d')
+    elif conf['mode'] == 'range':
+        mode = 'range'
+        start_dt = conf['start_date']
+        end_dt = conf['end_date'] or today
+    else:
+        mode = 'recent'
+        end_dt = today
         start_dt = (datetime.now() - timedelta(days=conf['date_window_days'])).strftime('%Y-%m-%d')
+
+    # 日线拉取量：范围模式按"起始日期距今"自动计算
+    # （fetch_bars 从最新往回拉offset根，需覆盖 距今交易日数 + MA250预热 + 量比前5日基准；
+    #   自然日数必≥交易日数，故 offset = 距今自然日数 + 320）
+    if mode == 'range':
+        back_days = max((datetime.now() - datetime.strptime(start_dt, '%Y-%m-%d')).days, 0)
+        offset = back_days + 320
+    else:
+        offset = conf['bars_offset']
 
     writer = DorisWriter(CONFIG['db'], conf['table_name'])
     codes = get_all_codes(conf['stock_list_file'])
@@ -159,26 +184,33 @@ def run(start_dt: str = None, end_dt: str = None, dry_run: bool = False,
     if limit:
         codes = codes[:limit]
 
-    print(f"日期窗口: {start_dt} ~ {end_dt} | 模式: {'dry-run' if dry_run else '写库'}")
+    if mode == 'range':
+        print(f"范围模式: {start_dt} ~ {end_dt} | 自动offset={offset} | 模式: {'dry-run' if dry_run else '写库'}")
+        if start_dt < '2000-06-10':
+            print("提醒: 起始日期早于 2000-06-10，该时段服务器无分时存档，量比/分时特征将为空")
+    else:
+        print(f"最近窗口模式: {start_dt} ~ {end_dt}（最近{conf['date_window_days']}天）| 模式: {'dry-run' if dry_run else '写库'}")
     print(f"共 {len(codes)} 只股票，启动 {conf['max_workers']} 线程")
 
     success, fail = [], []
-    pending, pending_codes = [], []   # 攒批缓冲（批量写库）
-    BATCH_SIZE = 200
+    pending = []                      # 攒批缓冲（批量写库）
+    pending_rows = 0                  # 缓冲累计行数
+    batch_rows = conf['batch_rows']   # 满N行写一次库
     start_time = time.time()
 
     def flush_batch():
         """批量写入缓冲区数据"""
+        nonlocal pending_rows
         if not pending:
             return
         writer.write(pd.concat(pending, ignore_index=True))
         pending.clear()
-        pending_codes.clear()
+        pending_rows = 0
 
     with ThreadPoolExecutor(max_workers=conf['max_workers']) as executor:
         futures = {
             executor.submit(process_stock, code, start_dt, end_dt,
-                            conf['bars_offset'], dry_run): code
+                            offset, dry_run): code
             for code in codes
         }
         for future in as_completed(futures):
@@ -189,8 +221,8 @@ def run(start_dt: str = None, end_dt: str = None, dry_run: bool = False,
                 # 攒批写库（主线程单点写入，避免并发写冲突）
                 if features is not None:
                     pending.append(features)
-                    pending_codes.append(code)
-                    if len(pending) >= BATCH_SIZE:
+                    pending_rows += len(features)
+                    if pending_rows >= batch_rows:
                         flush_batch()
             else:
                 fail.append(code)

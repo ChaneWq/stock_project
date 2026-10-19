@@ -1,8 +1,24 @@
+; ============================================================
 ; 股票特征入库配置模板
 ; 使用方法：复制本文件为 config.ini（同目录），填入真实连接信息
 ; config.ini 已被 .gitignore 排除，不会提交到 git
+;
+; 运行模式说明（[import] mode，二选一）：
+;
+;   1) recent 模式 —— 最近N天窗口（日常增量导入用）
+;      只需关心 date_window_days，日期自动取"今天-N天 ~ 今天"
+;
+;   2) range 模式 —— 自定义日期范围（补历史数据用）
+;      填 start_date / end_date 即可，日线拉取量按跨度自动计算，
+;      无需关心 bars_offset
+;
+;   命令行参数优先级最高：指定 --start/--end 运行时忽略本文件的
+;   mode 配置，按范围模式执行
+;   （如：python main.py --start 2003-09-01 --end 2003-09-30）
+; ============================================================
 
 [database]
+; DorisDB 连接信息
 host = 10.1.3.40
 port = 9030
 user = your_user
@@ -10,13 +26,41 @@ password = your_password
 database = your_db
 
 [import]
+; ---------- 运行模式 ----------
+; recent = 最近N天窗口（默认）
+; range  = 自定义日期范围
+mode = recent
+
+; ---------- recent 模式参数 ----------
+; 导入最近N天的数据（按自然日计窗口，如 20 = 最近20天）
+date_window_days = 4
+
+; ---------- range 模式参数 ----------
+; 自定义日期范围，格式 YYYY-MM-DD
+; start_date 必填；end_date 留空表示截至今天
+; 示例（补2003年9月数据）：
+;   start_date = 2003-09-01
+;   end_date   = 2003-09-30
+start_date =
+end_date =
+
+; ---------- 通用参数 ----------
 ; 特征表（表需已存在，本工具只插入不建表）
 table_name = stock_features4
+
 ; 股票清单文件（CSV，含code列；相对路径按本目录解析）
 stock_list_file = sc.txt
-; 默认导入窗口（天）
-date_window_days = 4
-; 日线拉取条数（需覆盖最长指标周期 MA250）
+
+; 攒批写库行数阈值（计算结果满N行写一次库）
+; 过小→写库频繁；过大→内存占用高、中断时丢失多
+; 范围模式单只股票动辄几千行，建议保持1万行左右
+batch_rows = 10000
+
+; recent模式的日线拉取条数（需覆盖最长指标周期MA250）
+; range模式自动计算，此项不生效
+; 当前值1800约覆盖7年行情
 bars_offset = 1800
-; 并发线程数
+
+; 并发线程数（每线程一条独立行情连接）
+; 过大有封IP风险，建议不超过5
 max_workers = 6
