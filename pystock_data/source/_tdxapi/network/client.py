@@ -233,36 +233,53 @@ class TdxClient:
         self.connect(self._ip, self._port)
 
     def _find_best_server(self) -> tuple[str, int]:
-        """测速选择最优服务器（含K线可用性校验）"""
+        """测速选择最优服务器（含K线可用性校验，K线异常时降级基础服务校验）"""
         best = None
-        best_time = float("inf")
+        best_key = None
         for ip, port in DEFAULT_SERVERS:
             t = self._probe_server(ip, port)
-            if t is not None and t < best_time:
-                best_time = t
+            if t is not None and (best_key is None or t < best_key):
+                best_key = t
                 best = (ip, port)
         if best is None:
             raise ConnectionError("所有服务器均不可用")
         return best
 
-    def _probe_server(self, ip: str, port: int) -> Optional[float]:
-        """探测服务器可用性：连接 + 握手 + 真实K线请求校验
+    def _probe_server(self, ip: str, port: int) -> Optional[tuple]:
+        """探测服务器可用性：连接 + 握手 + 真实请求校验
 
         仅测 TCP 延迟无法发现"连得上但K线服务异常"的服务器
         （如返回截断响应导致解析失败），因此探测时发一次真实
-        get_bars 请求，成功才视为可用。
+        get_bars 请求校验。
+
+        K线服务端偶发故障（响应截断）期间，分时/元数据等接口通常
+        独立可用——此时若仍强制K线校验会把所有服务器误杀，导致
+        分时等功能完全不可用。因此K线校验失败时降级用
+        get_stock_count（轻量元数据，不依赖K线与交易日历）兜底。
 
         Returns:
-            float: 探测总耗时(ms)；服务器不可用返回 None
+            (penalty, elapsed_ms) 元组：K线可用 penalty=0，仅基础
+            服务可用 penalty=1（排序时优先选K线可用的服务器，同级
+            再按延迟取最快）；服务器不可用返回 None
         """
         # 用临时 client 探测，不启心跳、不自动重连，探测完即关闭
         probe = TdxClient(heartbeat=False, auto_reconnect=False)
         try:
             start = time.time()
             probe.connect(ip, port)
-            bars = probe.get_bars("000001", "SZ", "1d", 1, 0)
             elapsed = (time.time() - start) * 1000
-            return elapsed if bars else None
+            try:
+                bars = probe.get_bars("000001", "SZ", "1d", 1, 0)
+                if bars:
+                    return (0, elapsed)
+            except Exception:
+                pass
+            try:
+                if probe.get_stock_count("SZ") > 0:
+                    return (1, elapsed)
+            except Exception:
+                pass
+            return None
         except Exception:
             return None
         finally:

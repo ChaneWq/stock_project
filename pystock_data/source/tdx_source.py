@@ -65,6 +65,11 @@ class TdxSource:
     _prev_day_vol_cache = {}
     _prev_day_vol_lock = threading.Lock()
 
+    # K线熔断：TDX K线接口连续失败后，短期内日线请求直走腾讯兜底，
+    # 避免每次都烧完重试（服务端故障恢复通常以分钟计）
+    _kline_broken_until = 0.0
+    _KLINE_BREAK_TTL = 600  # 熔断时长（秒）
+
     def __init__(self, market: str = 'std', thread_safe: bool = False):
         """
         初始化通达信数据源
@@ -91,7 +96,7 @@ class TdxSource:
 
     def fetch_bars(self, code: str, freq: int, offset: int, retries: int = 3) -> pd.DataFrame:
         """
-        获取K线数据（内置重试：失败或返回空时自动重试）
+        获取K线数据（内置重试：失败或返回空时自动重试；日线失败自动腾讯兜底）
 
         Args:
             code (str): 股票代码（6位字符串）
@@ -112,12 +117,23 @@ class TdxSource:
             - client通过ClientManager获取（缓存复用）
             - 首次调用时才初始化client（懒加载）
             - 服务器偶发返回空响应/断连时自动重试，应对大批量拉取场景
+            - 日线(freq=9)在TDX重试耗尽后自动走腾讯日K兜底（不复权，
+              volume单位与TDX一致为手）；K线熔断期内直接走兜底不烧重试
         """
+        use_fallback = freq == 9  # 仅日线有兜底（周/月线暂无备用源）
+
+        # 熔断期内：跳过TDX重试直走兜底（兜底也失败则回落TDX正常流程）
+        if use_fallback and time.time() < TdxSource._kline_broken_until:
+            df = self._fetch_daily_tencent(code, offset)
+            if not df.empty:
+                return df
+
         last_err = None
         for attempt in range(1, retries + 1):
             try:
                 df = self._fetch_bars_once(code, freq, offset)
                 if not df.empty:
+                    TdxSource._kline_broken_until = 0.0  # TDX恢复，解除熔断
                     return df
                 last_err = '返回空数据'
                 logger.warning(f"[TdxSource] {code} 第{attempt}/{retries}次拉取K线为空")
@@ -126,8 +142,72 @@ class TdxSource:
                 logger.warning(f"[TdxSource] {code} 第{attempt}/{retries}次拉取K线失败: {e}")
             if attempt < retries:
                 time.sleep(0.5 * attempt)
+
         logger.warning(f"[TdxSource] {code} K线拉取失败（已尝试{retries}次）: {last_err}")
+
+        # 日线兜底：TDX K线故障（服务端响应截断等）时改用腾讯日K接口
+        if use_fallback:
+            TdxSource._kline_broken_until = time.time() + TdxSource._KLINE_BREAK_TTL
+            df = self._fetch_daily_tencent(code, offset)
+            if not df.empty:
+                logger.warning(f"[TdxSource] {code} TDX日线不可用，腾讯兜底返回{len(df)}行")
+                return df
+
         return pd.DataFrame()
+
+    def _fetch_daily_tencent(self, code: str, offset: int) -> pd.DataFrame:
+        """
+        腾讯日K兜底（不复权）
+
+        TDX K线接口故障时用。volume单位与TDX一致（手），不复权价格口径一致；
+        无成交额字段（amount缺列，standardize_fields会自动跳过）。
+
+        Args:
+            code (str): 股票代码（6位字符串）
+            offset (int): 获取的数据数量（最近N个交易日）
+
+        Returns:
+            DataFrame: 标准化日线DataFrame；失败返回空DataFrame
+        """
+        try:
+            import requests
+
+            session = requests.Session()
+            session.trust_env = False  # 绕过系统代理（代理对该域名TLS握手异常）
+            session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+
+            _, market = normalize_code_market(code)
+            prefix = 'sh' if market == 'SH' else 'sz'
+            count = min(max(int(offset), 1), 800)
+
+            resp = session.get(
+                'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get',
+                params={'param': f'{prefix}{code},day,,,{count},'},
+                timeout=10,
+            )
+            node = resp.json().get('data', {}).get(f'{prefix}{code}', {})
+            rows = node.get('day') or node.get('qfqday') or []
+            if not rows:
+                return pd.DataFrame()
+
+            # 行格式: [日期, 开, 收, 高, 低, 量(手), ...]
+            df = pd.DataFrame(
+                [
+                    {
+                        'datetime': pd.to_datetime(r[0]),
+                        'open': float(r[1]),
+                        'close': float(r[2]),
+                        'high': float(r[3]),
+                        'low': float(r[4]),
+                        'volume': float(r[5]),
+                    }
+                    for r in rows
+                ]
+            )
+            return standardize_fields(df, code)
+        except Exception as e:
+            logger.warning(f"[TdxSource] {code} 腾讯日K兜底失败: {e}")
+            return pd.DataFrame()
 
     def _fetch_bars_once(self, code: str, freq: int, offset: int) -> pd.DataFrame:
         """单次拉取K线数据（异常向上抛出，由fetch_bars统一重试）"""
@@ -277,31 +357,16 @@ class TdxSource:
                     return TdxSource._prev_day_vol_cache[cache_key]
 
         try:
-            # 通过ClientManager获取client（缓存复用）
-            client = self._get_client()
-            _, market = normalize_code_market(code)
-
             # 多取一些数据确保能覆盖目标日期
+            # 走fetch_bars（内置TDX重试与腾讯日K兜底，K线故障时仍可用）
             offset = n + 50 if date else n + 10
-            # 分页拉取日线（单次上限800条）
-            bars = client.get_bars(code, market, "1d", min(offset, 800), 0)
+            df = self.fetch_bars(code, 9, offset)
 
-            if not bars:
+            if df is None or df.empty:
                 logger.warning(f"[TdxSource] 未获取到 {code} 的日线数据")
                 return None
 
-            # 转为DataFrame便于按日期定位
-            df = pd.DataFrame(
-                [
-                    {
-                        'datetime': b.datetime,
-                        'close': b.close,
-                        'volume': b.volume,
-                    }
-                    for b in bars
-                ]
-            )
-            # _tdxapi 返回时间升序（旧在前，新在后），统一为时间倒序
+            # fetch_bars返回时间升序（旧在前，新在后），统一为时间倒序
             # （iloc[0]最新，便于头部对齐取最近n日）
             df = df.sort_values('datetime', ascending=False).reset_index(drop=True)
 

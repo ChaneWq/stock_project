@@ -119,8 +119,11 @@ class BasicMinutesWithVR:
             day_data = self.source.fetch_prev_n_day_vol(code, n, date)
 
             if not day_data:
-                logger.warning(f"[BasicMinutesWithVR] 未获取到 {code} 过去{n}日日线数据")
-                return pd.DataFrame()
+                # 量比基准不可得（K线接口故障/日线缺失）时降级返回分时数据，
+                # volume_ratio置NaN，不把已取到的分时数据整体丢弃
+                logger.warning(f"[BasicMinutesWithVR] 未获取到 {code} 过去{n}日日线数据，"
+                               f"量比置空降级返回")
+                return self._calc_volume_ratio(minute_df, None)
 
             vol_list = day_data['vol_list']
             self._prev_close = day_data['prev_close']
@@ -186,12 +189,12 @@ class BasicMinutesWithVR:
     def _calc_volume_ratio(self, minute_df: pd.DataFrame, avg_vol_per_minute: float) -> pd.DataFrame:
         """
         计算量比
-        
         公式: 量比 = 当日累计成交量 / 时间序号 / 过去n日分钟均量
-        
+
         Args:
             minute_df (DataFrame): 分时数据，必须包含volume, hour, minute字段
-            avg_vol_per_minute (float): 过去n日每分钟平均成交量
+            avg_vol_per_minute (float): 过去n日每分钟平均成交量；
+                None/0 表示基准不可得，volume_ratio 置 NaN（降级模式）
         
         Returns:
             DataFrame: 增强数据（新增volume_ratio, cumulative_vol, time_index字段）
@@ -211,19 +214,20 @@ class BasicMinutesWithVR:
         
         # 计算时间序号
         df['time_index'] = self._calc_time_index(df['hour'].values, df['minute'].values)
-        
+
         # 计算累计成交量
         df['cumulative_vol'] = volume_series.cumsum()
-        
+
         # 计算量比 = 累计成交量 / 时间序号 / 过去n日分钟均量
-        df['volume_ratio'] = df['cumulative_vol'] / df['time_index'] / avg_vol_per_minute
-        
-        # 保留两位小数
-        df['volume_ratio'] = df['volume_ratio'].round(2)
-        
-        # 添加分钟均量字段（方便用户查看）
-        df['avg_vol_per_minute'] = avg_vol_per_minute
-        
+        if avg_vol_per_minute and avg_vol_per_minute > 0:
+            df['volume_ratio'] = df['cumulative_vol'] / df['time_index'] / avg_vol_per_minute
+            df['volume_ratio'] = df['volume_ratio'].round(2)
+            # 添加分钟均量字段（方便用户查看）
+            df['avg_vol_per_minute'] = avg_vol_per_minute
+        else:
+            # 基准不可得：量比置NaN（保留时间序号/累计量，价格与分钟量不受影响）
+            df['volume_ratio'] = np.nan
+
         return df
     
     def get_avg_vol_per_minute(self) -> float:
